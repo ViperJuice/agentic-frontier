@@ -1,0 +1,95 @@
+{
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/PreToolUse -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/PostToolUse -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/UserPromptSubmit -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/Stop -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "SubagentStop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/SubagentStop -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/SessionStart -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "Notification": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/Notification -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "PreCompact": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "curl -X POST http://localhost:3001/api/webhooks/claude/PreCompact -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
+              "timeout": 3
+            }
+          ]
+        }
+      ]
+    }
+  }
