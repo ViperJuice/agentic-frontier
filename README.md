@@ -1,183 +1,218 @@
-# Supabase CLI
+# Agentic Frontier
 
-[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main) [![Bitbucket Pipelines](https://img.shields.io/bitbucket/pipelines/supabase-cli/setup-cli/master?style=flat-square&label=Bitbucket%20Canary)](https://bitbucket.org/supabase-cli/setup-cli/pipelines) [![Gitlab Pipeline Status](https://img.shields.io/gitlab/pipeline-status/sweatybridge%2Fsetup-cli?label=Gitlab%20Canary)
-](https://gitlab.com/sweatybridge/setup-cli/-/pipelines)
+A real-time visualization platform that monitors Claude Code agent workflows through webhook integration. The system captures all Claude Code events and displays them as an interactive city-building visualization.
 
-[Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
+## 🎯 Project Status: Phase II Complete
 
-This repository contains all the functionality for Supabase CLI.
+**✅ Completed Features:**
+- Real-time Claude Code hook processing
+- Supabase database persistence
+- Server-Sent Events (SSE) for real-time updates
+- Session and project tracking
+- Agent character visualization support
+- File-to-building mapping system
+- Production-ready error handling and logging
 
-- [x] Running Supabase locally
-- [x] Managing database migrations
-- [x] Creating and deploying Supabase Functions
-- [x] Generating types directly from your database schema
-- [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
+## 🏗️ Architecture
 
-## Getting started
+### Backend (Node.js/Express)
+- **Enhanced Hook Processor**: Sophisticated event classification and processing
+- **Real-time SSE**: Server-Sent Events for live updates
+- **Dual Storage**: In-memory cache + Supabase persistence
+- **API Endpoints**: Comprehensive data access layer
 
-### Install the CLI
+### Database (Supabase)
+- **5 Core Tables**: projects, agent_sessions, activity_events, agent_characters, files
+- **Migration System**: Complete database structure for persistent storage
+- **Visualization Support**: Agent characters and file-to-building mapping
 
-Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
+### Infrastructure
+- **Vercel Deployment**: Configured for production deployment
+- **Environment Variables**: Local and production configurations
+- **Authentication**: Bearer token system for webhook security
 
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js >= 16.0.0
+- Docker (for local Supabase)
+- Claude Code CLI
+
+### Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/ViperJuice/agentic-frontier.git
+   cd agentic-frontier
+   ```
+
+2. **Install dependencies**
+   ```bash
+   cd backend && npm install
+   ```
+
+3. **Start Supabase locally**
+   ```bash
+   supabase start
+   ```
+
+4. **Configure environment**
+   ```bash
+   cp .env.local.example .env.local
+   # Edit .env.local with your Supabase credentials
+   ```
+
+5. **Start the backend server**
+   ```bash
+   cd backend && npm start
+   ```
+
+6. **Configure Claude Code hooks**
+   Copy `.claude/settings.json` to your Claude Code projects to enable monitoring.
+
+## 📡 API Endpoints
+
+- **Dashboard**: `GET /api/dashboard` - Overview statistics and recent events
+- **Events**: `GET /api/events` - Paginated event history
+- **Detailed Events**: `GET /api/events/detailed` - Events with full context
+- **Real-time Stream**: `GET /api/events/stream` - SSE endpoint for live updates
+- **Sessions**: `GET /api/sessions` - Active and historical sessions
+- **Projects**: `GET /api/projects` - Project tracking data
+- **Health Check**: `GET /api/health` - System status and diagnostics
+
+## 🔄 Hook Integration Flow
+
+1. Claude Code triggers hooks during operation
+2. Hooks send POST requests via cURL to `http://localhost:3001/api/webhooks/claude/{HookType}`
+3. Backend `HookProcessor` processes and classifies events
+4. Events are stored in both memory and Supabase
+5. Real-time broadcast via SSE to connected clients
+
+## 🎮 Event Classification
+
+The system maps tool usage to semantic activities:
+- **File operations** → 🔍 exploring, 📝 editing, ✏️ writing
+- **Code execution** → 🏃 executing, 🧪 testing
+- **Web operations** → 🌐 fetching, 🔎 searching
+- **Task management** → 📋 planning
+
+## 📊 Database Schema
+
+### Core Tables
+- **projects**: Project metadata and tracking
+- **agent_sessions**: Claude Code session management
+- **activity_events**: All captured events with full context
+- **agent_characters**: Virtual agents for visualization
+- **files**: File-to-building mapping for city visualization
+
+## 🎨 Visualization Features (Planned)
+
+- **Phase III**: Phaser.js visualization engine
+- **Phase IV**: Full metropolitan visualization
+- **Agent Characters**: Virtual agents with names, positions, and actions  
+- **Building System**: Files mapped to different building types
+- **Real-time Updates**: Live city changes as development happens
+
+## 🛠️ Development
+
+### Backend Commands
 ```bash
-npm i supabase --save-dev
+cd backend
+npm start          # Start production server
+npm run dev        # Start with nodemon (development)
+npm run test-db    # Test database connection
+npm run migrate    # Run Supabase migrations
+npm run types      # Generate TypeScript types
 ```
 
-To install the beta release channel:
-
+### Supabase Commands
 ```bash
-npm i supabase@beta --save-dev
+supabase start     # Start local instance
+supabase status    # Check service status
+supabase stop      # Stop local instance
+supabase reset     # Reset database
 ```
 
-When installing with yarn 4, you need to disable experimental fetch with the following nodejs config.
+## 🔧 Configuration
 
-```
-NODE_OPTIONS=--no-experimental-fetch yarn add supabase
-```
-
-> **Note**
-For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
-
-<details>
-  <summary><b>macOS</b></summary>
-
-  Available via [Homebrew](https://brew.sh). To install:
-
-  ```sh
-  brew install supabase/tap/supabase
-  ```
-
-  To install the beta release channel:
-  
-  ```sh
-  brew install supabase/tap/supabase-beta
-  brew link --overwrite supabase-beta
-  ```
-  
-  To upgrade:
-
-  ```sh
-  brew upgrade supabase
-  ```
-</details>
-
-<details>
-  <summary><b>Windows</b></summary>
-
-  Available via [Scoop](https://scoop.sh). To install:
-
-  ```powershell
-  scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-  scoop install supabase
-  ```
-
-  To upgrade:
-
-  ```powershell
-  scoop update supabase
-  ```
-</details>
-
-<details>
-  <summary><b>Linux</b></summary>
-
-  Available via [Homebrew](https://brew.sh) and Linux packages.
-
-  #### via Homebrew
-
-  To install:
-
-  ```sh
-  brew install supabase/tap/supabase
-  ```
-
-  To upgrade:
-
-  ```sh
-  brew upgrade supabase
-  ```
-
-  #### via Linux packages
-
-  Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg.tar.zst` file depending on your package manager and run the respective commands.
-
-  ```sh
-  sudo apk add --allow-untrusted <...>.apk
-  ```
-
-  ```sh
-  sudo dpkg -i <...>.deb
-  ```
-
-  ```sh
-  sudo rpm -i <...>.rpm
-  ```
-
-  ```sh
-  sudo pacman -U <...>.pkg.tar.zst
-  ```
-</details>
-
-<details>
-  <summary><b>Other Platforms</b></summary>
-
-  You can also install the CLI via [go modules](https://go.dev/ref/mod#go-install) without the help of package managers.
-
-  ```sh
-  go install github.com/supabase/cli@latest
-  ```
-
-  Add a symlink to the binary in `$PATH` for easier access:
-
-  ```sh
-  ln -s "$(go env GOPATH)/bin/cli" /usr/bin/supabase
-  ```
-
-  This works on other non-standard Linux distros.
-</details>
-
-<details>
-  <summary><b>Community Maintained Packages</b></summary>
-
-  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/main/projects/supabase.com/cli/package.yml).
-  To install in your working directory:
-
-  ```bash
-  pkgx install supabase
-  ```
-
-  Available via [Nixpkgs](https://nixos.org/). Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix).
-</details>
-
-### Run the CLI
-
+### Environment Variables (.env.local)
 ```bash
-supabase bootstrap
+# Supabase Configuration
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_KEY=your_service_key
+
+# API Configuration
+API_PORT=3001
+API_KEY=dev-key-123
+NODE_ENV=development
+
+# Real-time Configuration
+ENABLE_REALTIME=true
 ```
 
-Or using npx:
+### Claude Code Hook Configuration
+Place in `.claude/settings.json` of projects you want to monitor:
+```json
+{
+  "hooks": {
+    "SessionStart": "curl -X POST http://localhost:3001/api/webhooks/claude/SessionStart -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-",
+    "UserPromptSubmit": "curl -X POST http://localhost:3001/api/webhooks/claude/UserPromptSubmit -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-",
+    "PreToolUse": "curl -X POST http://localhost:3001/api/webhooks/claude/PreToolUse -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-",
+    "PostToolUse": "curl -X POST http://localhost:3001/api/webhooks/claude/PostToolUse -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-",
+    "Stop": "curl -X POST http://localhost:3001/api/webhooks/claude/Stop -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-",
+    "SubagentStop": "curl -X POST http://localhost:3001/api/webhooks/claude/SubagentStop -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-",
+    "Notification": "curl -X POST http://localhost:3001/api/webhooks/claude/Notification -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-",
+    "PreCompact": "curl -X POST http://localhost:3001/api/webhooks/claude/PreCompact -H 'Authorization: Bearer dev-key-123' -H 'Content-Type: application/json' -d @-"
+  }
+}
+```
 
+## 🚀 Deployment
+
+### Vercel Deployment
 ```bash
-npx supabase bootstrap
+# Deploy to Vercel
+vercel deploy --prod
+
+# Environment variables need to be set in Vercel dashboard:
+# - SUPABASE_URL (production)
+# - SUPABASE_SERVICE_KEY (production)
+# - API_KEY (production)
 ```
 
-The bootstrap command will guide you through the process of setting up a Supabase project using one of the [starter](https://github.com/supabase-community/supabase-samples/blob/main/samples.json) templates.
+## 📈 Roadmap
 
-## Docs
+### Phase III: Visualization Engine
+- [ ] Phaser.js integration
+- [ ] Agent character system
+- [ ] Basic city visualization
+- [ ] Real-time visual updates
 
-Command & config reference can be found [here](https://supabase.com/docs/reference/cli/about).
+### Phase IV: Full Metropolitan System
+- [ ] Advanced building types
+- [ ] Neighborhood organization
+- [ ] Interactive city exploration
+- [ ] Performance analytics dashboard
 
-## Breaking changes
+## 🤝 Contributing
 
-We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations.
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-However, due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. If you need such guarantees, we encourage you to pin a specific version of CLI in package.json.
+## 📝 License
 
-## Developing
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-To run from source:
+## 🙏 Acknowledgments
 
-```sh
-# Go >= 1.22
-go run . help
-```
+- Built with [Claude Code](https://claude.ai/code)
+- Database powered by [Supabase](https://supabase.com)
+- Visualization planned with [Phaser.js](https://phaser.io)
+- Deployed on [Vercel](https://vercel.com)
+
+---
+
+**Status**: Phase II Complete - Database persistence fully functional and production-ready! 🎉
