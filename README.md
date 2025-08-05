@@ -1,196 +1,183 @@
-# Agentic Frontier
+# Supabase CLI
 
-A real-time visualization platform that transforms Claude Code agent workflows into an interactive metropolitan development environment. Watch AI coding agents work as characters in a city-building inspired interface.
+[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main) [![Bitbucket Pipelines](https://img.shields.io/bitbucket/pipelines/supabase-cli/setup-cli/master?style=flat-square&label=Bitbucket%20Canary)](https://bitbucket.org/supabase-cli/setup-cli/pipelines) [![Gitlab Pipeline Status](https://img.shields.io/gitlab/pipeline-status/sweatybridge%2Fsetup-cli?label=Gitlab%20Canary)
+](https://gitlab.com/sweatybridge/setup-cli/-/pipelines)
 
-## 🎯 Vision
+[Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
 
-Agentic Frontier reimagines AI development monitoring by creating a game-like visualization where:
-- **Claude Code agents** appear as characters working in a virtual metropolitan area
-- **Projects** are districts with unique architectural styles
-- **Files and modules** become buildings that agents construct and maintain
-- **Code operations** translate into character actions, animations, and city development
-- **Multiple concurrent agents** can be monitored across different projects simultaneously
+This repository contains all the functionality for Supabase CLI.
 
-## 🚀 Current Status
+- [x] Running Supabase locally
+- [x] Managing database migrations
+- [x] Creating and deploying Supabase Functions
+- [x] Generating types directly from your database schema
+- [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
 
-**Phase I: Foundation** ✅ (Completed)
-- Real-time Claude Code hook integration via lightweight cURL commands
-- Server-side event processing and classification
-- REST API for event monitoring and dashboard views
-- Support for all 8 Claude Code hook types
+## Getting started
 
-## 🏗️ What's Working Now
+### Install the CLI
 
-### Hook Integration
-Captures all Claude Code events in real-time:
-- **PreToolUse** / **PostToolUse** - Tool preparation and completion
-- **UserPromptSubmit** - User interactions
-- **SessionStart** / **Stop** / **SubagentStop** - Agent lifecycle events
-- **Notification** - System notifications
-- **PreCompact** - Memory management operations
+Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
 
-### Backend API
-- Event processing and classification
-- Session tracking across multiple agent instances
-- Dashboard endpoint with activity statistics
-- Real-time event streaming capability
-
-### Current Architecture
-```
-Claude Code → cURL Hooks → Node.js Backend → Event Processing → API Endpoints
+```bash
+npm i supabase --save-dev
 ```
 
-## 📋 Quick Start
+To install the beta release channel:
 
-### Prerequisites
-- Node.js 16+
-- Claude Code installed
-- cURL (standard on most systems)
-
-### Setup
-
-1. **Clone and install:**
-   ```bash
-   git clone <repository-url>
-   cd agentic-frontier
-   cd backend
-   npm install
-   ```
-
-2. **Start the backend:**
-   ```bash
-   npm start
-   ```
-   Server will run on `http://localhost:3001`
-
-3. **Configure Claude Code hooks:**
-   Copy `.claude/settings.json` to your Claude Code project root:
-   ```json
-   {
-     "hooks": {
-       "PreToolUse": [
-         {
-           "matcher": "*",
-           "hooks": [
-             {
-               "type": "command",
-               "command": "curl -X POST http://localhost:3001/api/webhooks/claude/PreToolUse -H 'Content-Type: application/json' -H 'Authorization: Bearer dev-key-123' -d @- --max-time 2 --silent",
-               "timeout": 3
-             }
-           ]
-         }
-       ],
-       // ... (all 8 hook types configured)
-     }
-   }
-   ```
-
-4. **Test the integration:**
-   ```bash
-   # In your Claude Code project directory
-   claude --help
-   ```
-   
-   You should see hook events appear in the backend console.
-
-### API Endpoints
-
-- **Dashboard:** `GET /api/dashboard` - Recent events and statistics
-- **Events:** `GET /api/events` - All captured events (latest 50)
-- **Session Events:** `GET /api/events/session/:sessionId` - Events for specific session
-- **Health Check:** `GET /api/health` - Server status and uptime
-
-## 🗺️ Development Roadmap
-
-### Phase II: Database & Cloud Infrastructure (Next)
-- [ ] Supabase database integration for persistent storage
-- [ ] Vercel deployment for production API
-- [ ] Real-time WebSocket/SSE for live updates
-- [ ] Session management and agent tracking
-
-### Phase III: Basic Visualization (Upcoming)
-- [ ] Phaser.js game engine integration
-- [ ] Agent character system with basic animations
-- [ ] Simple world map for agent positioning
-- [ ] Speech bubble system for showing agent activities
-- [ ] Multi-project support with district visualization
-
-### Phase IV: Metropolitan Features (Future)
-- [ ] File-to-building mapping system
-- [ ] Project health and dependency visualization
-- [ ] Interactive code exploration through city interface
-- [ ] Team collaboration features
-- [ ] Historical project evolution views
-
-### Phase V: Advanced Analytics (Future)
-- [ ] AI-powered development insights
-- [ ] Code architecture visualization
-- [ ] Performance metrics and optimization suggestions
-- [ ] Integration with GitHub, VS Code, and other dev tools
-
-## 🛠️ Technical Stack
-
-### Current
-- **Backend:** Node.js with Express
-- **Hook Integration:** cURL commands (zero local dependencies)
-- **Data Storage:** In-memory (development only)
-
-### Planned
-- **Database:** Supabase (PostgreSQL with real-time features)
-- **API Hosting:** Vercel Edge Functions
-- **Visualization:** Phaser.js game engine
-- **Real-time:** Server-Sent Events (SSE)
-- **Frontend:** React with modern CSS
-
-## 🔧 Development
-
-### Project Structure
-```
-agentic-frontier/
-├── backend/
-│   ├── server.js           # Current API server
-│   └── package.json
-├── .claude/
-│   └── settings.json       # Claude Code hooks configuration
-├── frontend/               # (Future: Phaser.js visualization)
-└── README.md
+```bash
+npm i supabase@beta --save-dev
 ```
 
-### Adding New Hook Processing
-Event classification happens in the `HookProcessor` class. To add new tool types or improve activity classification:
+When installing with yarn 4, you need to disable experimental fetch with the following nodejs config.
 
-```javascript
-// In backend/server.js
-classifyActivity(hookType, data) {
-  switch (hookType) {
-    case 'PreToolUse':
-      // Add new tool classification logic here
-      if (data.tool_name === 'NewTool') {
-        return { category: 'new_category', action: 'new_action', icon: '🆕' };
-      }
-      // ...
-  }
-}
+```
+NODE_OPTIONS=--no-experimental-fetch yarn add supabase
 ```
 
-## 🤝 Contributing
+> **Note**
+For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
 
-This project is in early development. Current focus areas:
-- Improving event classification accuracy
-- Adding more detailed activity metadata
-- Preparing for database integration
-- Planning visualization architecture
+<details>
+  <summary><b>macOS</b></summary>
 
-## 📄 License
+  Available via [Homebrew](https://brew.sh). To install:
 
-MIT License - See LICENSE file for details
+  ```sh
+  brew install supabase/tap/supabase
+  ```
 
-## 🏙️ Vision Statement
+  To install the beta release channel:
+  
+  ```sh
+  brew install supabase/tap/supabase-beta
+  brew link --overwrite supabase-beta
+  ```
+  
+  To upgrade:
 
-*"Every line of code tells a story. Every agent action builds the future. Agentic Frontier makes that story visible, turning the abstract world of AI development into a living, breathing metropolitan landscape where progress is measured not just in commits, but in the growth of a digital civilization."*
+  ```sh
+  brew upgrade supabase
+  ```
+</details>
 
----
+<details>
+  <summary><b>Windows</b></summary>
 
-**Current Phase:** Foundation ✅  
-**Next Milestone:** Database Integration & Cloud Deployment  
-**Ultimate Goal:** Interactive AI Development Metropolis
+  Available via [Scoop](https://scoop.sh). To install:
+
+  ```powershell
+  scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+  scoop install supabase
+  ```
+
+  To upgrade:
+
+  ```powershell
+  scoop update supabase
+  ```
+</details>
+
+<details>
+  <summary><b>Linux</b></summary>
+
+  Available via [Homebrew](https://brew.sh) and Linux packages.
+
+  #### via Homebrew
+
+  To install:
+
+  ```sh
+  brew install supabase/tap/supabase
+  ```
+
+  To upgrade:
+
+  ```sh
+  brew upgrade supabase
+  ```
+
+  #### via Linux packages
+
+  Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg.tar.zst` file depending on your package manager and run the respective commands.
+
+  ```sh
+  sudo apk add --allow-untrusted <...>.apk
+  ```
+
+  ```sh
+  sudo dpkg -i <...>.deb
+  ```
+
+  ```sh
+  sudo rpm -i <...>.rpm
+  ```
+
+  ```sh
+  sudo pacman -U <...>.pkg.tar.zst
+  ```
+</details>
+
+<details>
+  <summary><b>Other Platforms</b></summary>
+
+  You can also install the CLI via [go modules](https://go.dev/ref/mod#go-install) without the help of package managers.
+
+  ```sh
+  go install github.com/supabase/cli@latest
+  ```
+
+  Add a symlink to the binary in `$PATH` for easier access:
+
+  ```sh
+  ln -s "$(go env GOPATH)/bin/cli" /usr/bin/supabase
+  ```
+
+  This works on other non-standard Linux distros.
+</details>
+
+<details>
+  <summary><b>Community Maintained Packages</b></summary>
+
+  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/main/projects/supabase.com/cli/package.yml).
+  To install in your working directory:
+
+  ```bash
+  pkgx install supabase
+  ```
+
+  Available via [Nixpkgs](https://nixos.org/). Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix).
+</details>
+
+### Run the CLI
+
+```bash
+supabase bootstrap
+```
+
+Or using npx:
+
+```bash
+npx supabase bootstrap
+```
+
+The bootstrap command will guide you through the process of setting up a Supabase project using one of the [starter](https://github.com/supabase-community/supabase-samples/blob/main/samples.json) templates.
+
+## Docs
+
+Command & config reference can be found [here](https://supabase.com/docs/reference/cli/about).
+
+## Breaking changes
+
+We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations.
+
+However, due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. If you need such guarantees, we encourage you to pin a specific version of CLI in package.json.
+
+## Developing
+
+To run from source:
+
+```sh
+# Go >= 1.22
+go run . help
+```
