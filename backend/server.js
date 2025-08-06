@@ -3,9 +3,15 @@
 
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-const { spawn } = require('child_process');
 const path = require('path');
+
+// Load environment variables in development
+if (process.env.NODE_ENV !== 'production') {
+    require('dotenv').config({ path: path.join(__dirname, '../.env.local') });
+}
+
+const { createClient } = require('@supabase/supabase-js');
+// const { spawn } = require('child_process'); // DISABLED: Parser removed in refactor
 const fs = require('fs').promises;
 
 // Initialize Express
@@ -18,7 +24,8 @@ app.use(express.json({ limit: '10mb' }));
 
 // Initialize Supabase
 const supabaseUrl = process.env.SUPABASE_URL || 'http://localhost:54321';
-const supabaseKey = process.env.SUPABASE_ANON_KEY || 'your-anon-key';
+// Use SERVICE_KEY for backend operations (full access), fallback to ANON_KEY if needed
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // SSE clients tracking
@@ -183,7 +190,7 @@ class HookProcessor {
                 // FUTURE: Read operations could potentially cache file content
                 // for subsequent parsing when TreeSitter is ready
                 if (isPost && toolInput.file_path) {
-                    await this.markFileExplored(toolInput.file_path, sessionId);
+                    await this.markFileExplored(toolInput.file_path, data.session_id);
                 }
                 break;
             
@@ -217,18 +224,18 @@ class HookProcessor {
         // Update file record
         const file = await this.updateFile(filePath, sessionId);
         
-        // Check if we have full content (only for Write operations)
-        if (data.tool_name === 'Write' && toolInput.content) {
-            // We might have full content for new files
-            await this.attemptStructureParsing(filePath, toolInput.content, file, sessionId);
-        } else {
-            // For Edit/MultiEdit, we definitely don't have full content
-            // Mark file as needing structure update
-            await this.markFileNeedsStructureUpdate(file.id);
-            
-            // Log what we would parse if we had content
-            console.log(`[Structure Parse Pending] ${filePath} - Awaiting full content access`);
+        if (!file) {
+            console.error(`[File Operation] Failed to update file record for ${filePath}`);
+            return;
         }
+        
+        // We NO LONGER attempt parsing here since we don't have reliable full content
+        // Even for Write operations, we can't be sure the content is complete
+        
+        // Always mark file as needing structure update
+        await this.markFileNeedsStructureUpdate(file.id);
+        
+        console.log(`[File Operation] ${filePath} - Marked for future parsing when TreeSitter available`);
         
         // FUTURE: This is where TreeSitter hook data would be processed
         // if (data.treesitter_structures) {
@@ -237,84 +244,32 @@ class HookProcessor {
     }
 
     async attemptStructureParsing(filePath, content, file, sessionId) {
-        // Only attempt parsing if we're confident we have full content
-        // This is mainly for new files created with Write
+        // DEPRECATED: Parser removed in refactor
+        // We cannot reliably parse without full file content
+        // This function is kept as a stub for when TreeSitter integration is ready
         
-        const ext = path.extname(filePath);
-        const parseableExts = ['.py', '.js', '.jsx', '.ts', '.tsx'];
+        console.log(`[Structure Parse] ${filePath} - Parser disabled, awaiting TreeSitter integration`);
+        await this.markFileNeedsStructureUpdate(file.id);
         
-        if (!parseableExts.includes(ext)) {
-            console.log(`[Structure Parse Skip] ${filePath} - Unsupported extension`);
-            return;
+        // FUTURE: When TreeSitter data is available in hooks
+        // This function will process the TreeSitter AST instead of trying to parse content
+        
+        /* Example future implementation:
+        if (data.treesitter_structures) {
+            await this.processTreeSitterStructures(data.treesitter_structures, file, sessionId);
         }
-        
-        // Check if content looks complete (basic heuristic)
-        const looksComplete = content.includes('\n') && 
-                            (content.includes('function') || 
-                             content.includes('class') || 
-                             content.includes('const') ||
-                             content.includes('def'));
-        
-        if (!looksComplete) {
-            console.log(`[Structure Parse Skip] ${filePath} - Content appears incomplete`);
-            await this.markFileNeedsStructureUpdate(file.id);
-            return;
-        }
-        
-        try {
-            // Attempt to parse with existing parser
-            const parseResult = await this.runCodeParser(filePath, content);
-            
-            if (!parseResult.error) {
-                await this.storeCodeStructures(parseResult, file, sessionId);
-                console.log(`[Structure Parse Success] ${filePath} - ${parseResult.structures?.length || 0} structures found`);
-            } else {
-                console.log(`[Structure Parse Error] ${filePath} - ${parseResult.error}`);
-                await this.markFileNeedsStructureUpdate(file.id);
-            }
-        } catch (error) {
-            console.error(`[Structure Parse Failed] ${filePath}:`, error);
-            await this.markFileNeedsStructureUpdate(file.id);
-        }
+        */
     }
 
+    // DEPRECATED: Python parser removed - TreeSitter will replace this
+    // Keeping function signature for future use
     async runCodeParser(filePath, content) {
-        // Existing parser implementation
-        // This will be replaced/enhanced with TreeSitter
-        return new Promise((resolve) => {
-            const parser = spawn('python3', [
-                path.join(__dirname, 'code_parser.py')
-            ]);
-            
-            let output = '';
-            let error = '';
-            
-            parser.stdout.on('data', (data) => {
-                output += data.toString();
-            });
-            
-            parser.stderr.on('data', (data) => {
-                error += data.toString();
-            });
-            
-            parser.on('close', (code) => {
-                if (code !== 0) {
-                    resolve({ error: error || 'Parser failed' });
-                } else {
-                    try {
-                        const result = JSON.parse(output);
-                        resolve(result);
-                    } catch (e) {
-                        resolve({ error: 'Failed to parse output' });
-                    }
-                }
-            });
-            
-            // Send input to parser
-            const input = JSON.stringify({ file_path: filePath, content });
-            parser.stdin.write(input);
-            parser.stdin.end();
-        });
+        // Parser disabled in refactor - we don't have reliable full content
+        return { 
+            error: 'Parser disabled - awaiting TreeSitter integration',
+            structures: [],
+            dependencies: []
+        };
     }
 
     async storeCodeStructures(parseResult, file, sessionId) {
@@ -450,24 +405,27 @@ class HookProcessor {
         const position = await this.calculateFilePosition(project.id);
         
         // Update or create file
-        const { data: file } = await supabase
+        const { data: file, error } = await supabase
             .from('files')
             .upsert({
                 project_id: project.id,
-                file_path: filePath,
-                file_name: path.basename(filePath),
+                path: filePath,  // Changed from file_path
+                name: path.basename(filePath),  // Changed from file_name
                 extension: path.extname(filePath),
-                last_modified_by: sessionId,
-                position_x: position.x,
-                position_y: position.y,
+                position: { x: position.x, y: position.y },  // Changed to JSONB format
                 building_type: this.getBuildingType(filePath),
-                building_color: this.getBuildingColor(filePath),
-                // Structure parsing status
-                has_structures: false,  // Default to false since we don't have content
-                needs_parsing: true      // Flag for future parsing
+                building_height: 1,
+                last_modified_at: new Date().toISOString()
+                // Note: last_modified_by expects UUID, but sessionId is text
+                // We'll skip this for now
             })
             .select()
             .single();
+        
+        if (error) {
+            console.error(`[updateFile] Error upserting file:`, error);
+            return null;
+        }
         
         return file;
     }
@@ -476,7 +434,7 @@ class HookProcessor {
         // Get existing files to avoid overlap
         const { data: files } = await supabase
             .from('files')
-            .select('position_x, position_y')
+            .select('position')
             .eq('project_id', projectId);
         
         // Simple spiral pattern for positioning
@@ -485,7 +443,7 @@ class HookProcessor {
         let steps = 1, stepCount = 0;
         let turnCount = 0;
         
-        while (files?.some(f => f.position_x === x && f.position_y === y)) {
+        while (files?.some(f => f.position?.x === x && f.position?.y === y)) {
             x += dx * 3;
             y += dy * 3;
             stepCount++;
@@ -872,9 +830,10 @@ app.listen(PORT, () => {
     console.log(`🚀 Agentic Frontier backend running on http://localhost:${PORT}`);
     console.log(`📡 SSE stream available at http://localhost:${PORT}/api/events/stream`);
     console.log(`🔧 Webhook endpoint: http://localhost:${PORT}/api/webhooks/claude/:hookType`);
-    console.log('\n⚠️  Phase IV: File-level visualization active');
+    console.log('\n⚠️  Phase IV Refactored: File-level visualization active');
     console.log('   - Tracking file modifications and agent activity');
-    console.log('   - Code structure parsing: LIMITED (only new files)');
-    console.log('   - Awaiting TreeSitter integration for full parsing');
-    console.log('\n📋 Files will be marked for parsing when content becomes available');
+    console.log('   - Code structure parsing: DISABLED (no reliable content access)');
+    console.log('   - Awaiting TreeSitter integration for structure parsing');
+    console.log('   - Python parser removed in refactor');
+    console.log('\n📋 Files are marked for parsing when TreeSitter becomes available');
 });
