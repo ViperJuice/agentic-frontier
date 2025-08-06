@@ -2,9 +2,9 @@
 
 A real-time visualization platform that monitors Claude Code agent workflows through webhook integration. The system captures all Claude Code events and displays them as an interactive city-building visualization.
 
-## 🎯 Project Status: Phase II Complete
+## 🎯 Project Status: Phase II Complete ✅
 
-**✅ Completed Features:**
+**✅ Completed Features (Phase II):**
 - Real-time Claude Code hook processing
 - Supabase database persistence
 - Server-Sent Events (SSE) for real-time updates
@@ -13,18 +13,33 @@ A real-time visualization platform that monitors Claude Code agent workflows thr
 - File-to-building mapping system
 - Production-ready error handling and logging
 
+**🚧 In Development (Phase IV - Code-Level Visualization):**
+- Enhanced backend with code structure parsing capabilities
+- TreeSitter integration framework (pending full implementation)
+- Extended database schema for code structures, dependencies, and call graphs
+- Advanced visualization hierarchy: Projects → Files → Classes → Methods/Functions
+
 ## 🏗️ Architecture
 
 ### Backend (Node.js/Express)
 - **Enhanced Hook Processor**: Sophisticated event classification and processing
+- **Code Structure Parser**: Python AST & JavaScript parsing with TreeSitter framework
 - **Real-time SSE**: Server-Sent Events for live updates
 - **Dual Storage**: In-memory cache + Supabase persistence
-- **API Endpoints**: Comprehensive data access layer
+- **API Endpoints**: Comprehensive data access layer with structure support
 
 ### Database (Supabase)
-- **5 Core Tables**: projects, agent_sessions, activity_events, agent_characters, files
-- **Migration System**: Complete database structure for persistent storage
-- **Visualization Support**: Agent characters and file-to-building mapping
+**Phase II Core Tables (5):**
+- **projects**: Project metadata and tracking
+- **agent_sessions**: Claude Code session management  
+- **activity_events**: All captured events with full context
+- **agent_characters**: Virtual agents for visualization
+- **files**: File-to-building mapping for city visualization
+
+**Phase IV Extended Tables (3 additional):**
+- **code_structures**: Classes, methods, functions with visualization data
+- **dependencies**: Import relationships and trade routes
+- **call_graph**: Function call relationships and execution paths
 
 ### Infrastructure
 - **Vercel Deployment**: Configured for production deployment
@@ -35,6 +50,7 @@ A real-time visualization platform that monitors Claude Code agent workflows thr
 
 ### Prerequisites
 - Node.js >= 16.0.0
+- Python 3.8+ (for code structure parsing)
 - Docker (for local Supabase)
 - Claude Code CLI
 
@@ -48,7 +64,11 @@ A real-time visualization platform that monitors Claude Code agent workflows thr
 
 2. **Install dependencies**
    ```bash
+   # Backend dependencies
    cd backend && npm install
+   
+   # Python dependencies for code parsing
+   pip install ast  # For Python parsing (built-in)
    ```
 
 3. **Start Supabase locally**
@@ -72,13 +92,20 @@ A real-time visualization platform that monitors Claude Code agent workflows thr
 
 ## 📡 API Endpoints
 
+### Core Endpoints (Phase II)
 - **Dashboard**: `GET /api/dashboard` - Overview statistics and recent events
-- **Events**: `GET /api/events` - Paginated event history
+- **Events**: `GET /api/events` - Paginated event history  
 - **Detailed Events**: `GET /api/events/detailed` - Events with full context
 - **Real-time Stream**: `GET /api/events/stream` - SSE endpoint for live updates
 - **Sessions**: `GET /api/sessions` - Active and historical sessions
 - **Projects**: `GET /api/projects` - Project tracking data
 - **Health Check**: `GET /api/health` - System status and diagnostics
+
+### Code Structure Endpoints (Phase IV)
+- **Structures**: `GET /api/structures/:fileId` - Code structures for a file
+- **Files**: `GET /api/files/:projectId` - Files with parsing status
+- **Dependencies**: `GET /api/dependencies/:projectId` - Import relationships
+- **Structure Update**: `POST /api/structures/update` - TreeSitter integration endpoint
 
 ## 🔄 Hook Integration Flow
 
@@ -88,30 +115,75 @@ A real-time visualization platform that monitors Claude Code agent workflows thr
 4. Events are stored in both memory and Supabase
 5. Real-time broadcast via SSE to connected clients
 
-## 🎮 Event Classification
+## 🎮 Event Classification & Visualization
 
+### Activity Classification (Phase II)
 The system maps tool usage to semantic activities:
 - **File operations** → 🔍 exploring, 📝 editing, ✏️ writing
 - **Code execution** → 🏃 executing, 🧪 testing
 - **Web operations** → 🌐 fetching, 🔎 searching
 - **Task management** → 📋 planning
 
+### Visualization Hierarchy (Phase IV)
+```
+Project (Territory/Civilization)
+└── Files (Settlements/Cities)
+    └── Classes (Districts with walls)
+        └── Methods/Functions (Buildings)
+            └── Variables (Resources)
+```
+
+### Visual Mapping
+| Code Structure | Building Type | Visual Style | Color |
+|---------------|--------------|--------------|-------|
+| Class | District | Walled area | Brown |
+| Constructor | Gateway | Entry building | Gold |
+| Public Method | Public Building | Open access | Green |
+| Private Method | Internal Building | No roads | Red |
+| Static Method | Monument | Statue-like | Gray |
+| Async Function | Dock | Loading area | Cyan |
+
 ## 📊 Database Schema
 
-### Core Tables
+### Phase II Core Tables (5)
 - **projects**: Project metadata and tracking
 - **agent_sessions**: Claude Code session management
 - **activity_events**: All captured events with full context
 - **agent_characters**: Virtual agents for visualization
 - **files**: File-to-building mapping for city visualization
 
-## 🎨 Visualization Features (Planned)
+### Phase IV Extended Tables (3)
+- **code_structures**: Parsed code elements (classes, methods, functions)
+  - Position within file (line numbers)
+  - Visualization data (district position, building type)
+  - Hierarchy relationships (parent structures)
+- **dependencies**: Import relationships and trade routes
+  - Source and target files
+  - Import types and imported items
+  - Visualization as animated trade routes
+- **call_graph**: Function call relationships
+  - Caller and callee structures
+  - Call frequency and types
+  - Visualization paths between buildings
 
-- **Phase III**: Phaser.js visualization engine
-- **Phase IV**: Full metropolitan visualization
-- **Agent Characters**: Virtual agents with names, positions, and actions  
-- **Building System**: Files mapped to different building types
+## 🎨 Visualization Features
+
+### Phase II (✅ Complete)
+- **Agent Characters**: Virtual agents with names, positions, and actions
+- **File-to-Building Mapping**: Files represented as different building types
 - **Real-time Updates**: Live city changes as development happens
+
+### Phase III (📋 Planned)
+- **Phaser.js Integration**: Game engine for complex visualizations
+- **Basic City Visualization**: Interactive 2D city view
+- **Agent Movement**: Agents move between buildings during operations
+
+### Phase IV (🚧 In Development)
+- **Code-Level Granularity**: Classes as districts, methods as buildings
+- **Enhanced Agent Behavior**: Agents work within specific code structures
+- **Trade Routes**: Dependencies visualized as animated connections
+- **Construction/Excavation**: Visual feedback for code creation/deletion
+- **Interactive Development**: Click buildings to view source code
 
 ## 🛠️ Development
 
@@ -188,11 +260,22 @@ vercel deploy --prod
 - [ ] Basic city visualization
 - [ ] Real-time visual updates
 
-### Phase IV: Full Metropolitan System
-- [ ] Advanced building types
-- [ ] Neighborhood organization
-- [ ] Interactive city exploration
-- [ ] Performance analytics dashboard
+### Phase IV: Code-Level Visualization (🚧 In Progress)
+- [x] Enhanced backend architecture
+- [x] Extended database schema
+- [x] Code structure parsing framework
+- [ ] TreeSitter integration completion
+- [ ] Full dependency analysis
+- [ ] Interactive code visualization
+- [ ] Real-time structure updates
+
+### Phase V: Advanced Features (📋 Planned)
+- [ ] Interactive Development (click-to-edit)
+- [ ] Real-time debugging visualization
+- [ ] Team collaboration features
+- [ ] Performance analytics and heat maps
+- [ ] Test coverage visualization
+- [ ] Code complexity metrics
 
 ## 🤝 Contributing
 
@@ -215,4 +298,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Status**: Phase II Complete - Database persistence fully functional and production-ready! 🎉
+**Current Status**: 
+- ✅ **Phase II Complete** - Database persistence fully functional and production-ready!
+- 🚧 **Phase IV In Development** - Code-level visualization architecture implemented, TreeSitter integration pending
+
+*"Every function is a building, every class a district, every file a city. Welcome to your code civilization."* 🏗️

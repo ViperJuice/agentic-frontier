@@ -1,1283 +1,880 @@
-// Enhanced Agentic Frontier Backend with Supabase Integration & Real-time
-// Builds upon the existing Phase I foundation with persistent storage and SSE
+// Enhanced Backend Server with Code Structure Support (Refactored)
+// File: backend/server.js
 
-require('dotenv').config({ path: '../.env.local' });
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs').promises;
 
+// Initialize Express
 const app = express();
-const PORT = process.env.API_PORT || 3001;
-
-// Initialize Supabase client
-const supabase = process.env.SUPABASE_URL ? createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
-) : null;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Authentication middleware
-const authenticate = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const expectedKey = process.env.API_KEY || 'dev-key-123';
-  
-  if (req.path.startsWith('/api/webhooks/claude/') && authHeader !== `Bearer ${expectedKey}`) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-};
+// Initialize Supabase
+const supabaseUrl = process.env.SUPABASE_URL || 'http://localhost:54321';
+const supabaseKey = process.env.SUPABASE_ANON_KEY || 'your-anon-key';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-app.use(authenticate);
-
-// In-memory cache (kept for performance and fallback)
-const memoryStore = {
-  events: [],
-  sessions: new Map(),
-  projects: new Map()
-};
-
-// SSE clients management
+// SSE clients tracking
 const sseClients = new Set();
 
-// Server statistics
-const serverStats = {
-  startTime: new Date(),
-  eventsProcessed: 0,
-  dbWrites: 0,
-  dbErrors: 0,
-  lastEventTime: null
-};
+// Code structure cache (for future use when we have content)
+const structureCache = new Map();
 
-// =====================================================
-// ENHANCED HOOK PROCESSOR WITH SUPABASE
-// =====================================================
-
-class EnhancedHookProcessor {
-  constructor() {
-    this.startTime = Date.now();
-    this.eventQueue = [];
-    this.processing = false;
-  }
-
-  async processEvent(hookType, rawData) {
-    // Create base event structure (keeping your existing logic)
-    const event = {
-      id: memoryStore.events.length + 1,
-      hook_type: hookType,
-      timestamp: new Date().toISOString(),
-      session_id: rawData.session_id,
-      project_dir: rawData.cwd || rawData.project_dir,  // Handle both field names
-      transcript_path: rawData.transcript_path,
-      raw_data: rawData,
-      
-      // Enhanced processing (keeping all your existing classification logic)
-      activity: this.classifyActivity(hookType, rawData),
-      file_context: this.extractFileContext(hookType, rawData),
-      command_context: this.extractCommandContext(hookType, rawData),
-      session_context: await this.updateSessionContext(rawData),
-      project_context: await this.updateProjectContext(rawData)
-    };
-    
-    // Store in memory (immediate response)
-    memoryStore.events.push(event);
-    
-    // Queue for async database storage
-    this.queueDatabaseWrite(event);
-    
-    // Broadcast to SSE clients
-    this.broadcastToSSE(event);
-    
-    // Log the event
-    this.logEvent(event);
-    
-    serverStats.eventsProcessed++;
-    serverStats.lastEventTime = new Date();
-    
-    return event;
-  }
-
-  async queueDatabaseWrite(event) {
-    if (!supabase) return;
-    
-    this.eventQueue.push(event);
-    
-    if (!this.processing) {
-      this.processQueue();
+class HookProcessor {
+    constructor() {
+        this.sessionData = new Map();
+        this.activeAgents = new Map();
+        this.projectCache = new Map();
+        
+        // Future: TreeSitter parser instance will be initialized here
+        this.treeSitterParser = null;
     }
-  }
 
-  async processQueue() {
-    this.processing = true;
-    
-    while (this.eventQueue.length > 0) {
-      const event = this.eventQueue.shift();
-      
-      try {
-        await this.persistToDatabase(event);
-        serverStats.dbWrites++;
-      } catch (error) {
-        console.error('Database write error:', error);
-        serverStats.dbErrors++;
-        // Re-queue on error (with limit to prevent infinite loop)
-        if (!event.retryCount || event.retryCount < 3) {
-          event.retryCount = (event.retryCount || 0) + 1;
-          this.eventQueue.push(event);
+    async processHook(hookType, data) {
+        console.log(`[${new Date().toISOString()}] Processing ${hookType} hook`);
+        
+        // Extract session ID
+        const sessionId = data.session_id || 'unknown';
+        
+        // Track session
+        await this.trackSession(sessionId, hookType, data);
+        
+        // Process based on hook type
+        const activity = await this.processHookType(hookType, data);
+        
+        // Store activity event
+        if (activity) {
+            await this.storeActivityEvent(sessionId, hookType, activity, data);
+            
+            // Track file operations
+            if (hookType === 'PostToolUse' && ['Write', 'Edit', 'MultiEdit'].includes(data.tool_name)) {
+                await this.handleFileOperation(data, sessionId);
+            }
+            
+            // Broadcast to SSE clients
+            this.broadcastUpdate({
+                type: 'activity',
+                hookType,
+                sessionId,
+                activity,
+                timestamp: new Date().toISOString()
+            });
         }
-      }
-    }
-    
-    this.processing = false;
-  }
-
-  async persistToDatabase(event) {
-    if (!supabase) return;
-
-    try {
-      // Ensure project exists
-      const project = await this.ensureProject(event);
-      
-      // Ensure session exists
-      const session = await this.ensureSession(event, project);
-      
-      // Check if session and project exist
-      if (!session || !session.id) {
-        console.warn("Session not found or invalid, skipping database write");
-        return;
-      }
-      if (!project || !project.id) {
-        console.warn("Project not found or invalid, skipping database write");
-        return;
-      }
-
-      // Store the event
-      const { data: activityEvent, error: eventError } = await supabase
-        .from('activity_events')
-        .insert({
-          session_id: session.id,
-          project_id: project.id,
-          event_type: event.hook_type,
-          tool_name: event.raw_data.tool_name,
-          activity_type: event.activity.category,
-          activity_description: event.activity.description,
-          priority: event.activity.priority || 'normal',
-          status: event.activity.success === false ? 'failure' : 'success',
-          raw_input: event.raw_data,
-          tool_input: event.raw_data.tool_input,
-          tool_response: event.raw_data.tool_response,
-          file_context: event.file_context,
-          command_context: event.command_context,
-          error_context: event.activity.error ? { error: event.activity.error } : null
-        })
-        .select()
-        .single();
-
-      if (eventError) throw eventError;
-
-      // Update agent character if needed
-      if (event.activity.icon && session) {
-        await this.updateAgentCharacter(session.id, event);
-      }
-
-      // Update file records for file operations
-      if (event.file_context && project) {
-        await this.updateFileRecord(project.id, event.file_context, session.id);
-      }
-
-    } catch (error) {
-      console.error('Database persistence error:', error);
-      throw error;
-    }
-  }
-
-  async ensureProject(event) {
-    // Get the project path from either cwd or project_dir
-    const projectPath = event.project_dir || event.cwd || event.raw_data?.cwd || event.raw_data?.project_dir;
-    
-    // Check if we have required data
-    if (!supabase || !projectPath) {
-      return null;
+        
+        return activity;
     }
 
-    const projectName = path.basename(projectPath);
-
-    // Check cache first
-    if (memoryStore.projects.has(projectPath)) {
-      const cachedProject = memoryStore.projects.get(projectPath);
-      
-      // Only return cached project if it has database ID
-      if (cachedProject.id) {
-        return cachedProject;
-      }
-      // If no database ID, continue to database lookup/creation
+    async processHookType(hookType, data) {
+        switch (hookType) {
+            case 'SessionStart':
+                return await this.handleSessionStart(data);
+            
+            case 'PreToolUse':
+            case 'PostToolUse':
+                return await this.handleToolUse(hookType, data);
+            
+            case 'UserPromptSubmit':
+                return this.handleUserPrompt(data);
+            
+            case 'Stop':
+            case 'SubagentStop':
+                return this.handleStop(hookType, data);
+            
+            case 'Notification':
+                return this.handleNotification(data);
+            
+            case 'PreCompact':
+                return this.handleCompact(data);
+            
+            default:
+                return {
+                    category: 'unknown',
+                    action: hookType,
+                    icon: '❓',
+                    details: {}
+                };
+        }
     }
 
-    try {
-      // Check if project exists in database
-      let { data: project, error } = await supabase
-        .from('projects')
-        .select('*')
-        .eq('path', projectPath)
-        .single();
+    async handleSessionStart(data) {
+        const sessionId = data.session_id;
+        
+        // Create or update agent session
+        const { data: agent, error } = await supabase
+            .from('agent_sessions')
+            .upsert({
+                session_id: sessionId,
+                status: 'active',
+                started_at: new Date().toISOString(),
+                transcript_path: data.transcript_path,
+                source: data.source || 'startup'
+            })
+            .select()
+            .single();
+        
+        if (!error && agent) {
+            // Create agent character for visualization
+            await this.createAgentCharacter(agent);
+        }
+        
+        // FUTURE: When TreeSitter is integrated, we could potentially
+        // request a full project scan here if we have access to the codebase
+        // await this.requestProjectScan(sessionId);
+        
+        return {
+            category: 'lifecycle',
+            action: 'session_start',
+            icon: '🚀',
+            details: {
+                source: data.source,
+                transcript: data.transcript_path
+            }
+        };
+    }
 
-      if (error && error.code === 'PGRST116') {
-        // Project doesn't exist, create it
-        const { data: newProject, error: createError } = await supabase
-          .from('projects')
-          .insert({
-            name: projectName,
-            path: projectPath,
-            description: `Claude Code project at ${projectPath}`
-          })
-          .select()
-          .single();
+    async handleToolUse(hookType, data) {
+        const toolName = data.tool_name;
+        const toolInput = data.tool_input || {};
+        const isPost = hookType === 'PostToolUse';
+        
+        let activity = {
+            category: 'tool',
+            action: toolName.toLowerCase(),
+            icon: this.getToolIcon(toolName),
+            details: {}
+        };
+        
+        // Process based on tool type
+        switch (toolName) {
+            case 'Write':
+            case 'Edit':
+            case 'MultiEdit':
+                activity.category = 'code';
+                activity.action = isPost ? 'modified' : 'modifying';
+                activity.details = {
+                    file: toolInput.file_path || toolInput.files,
+                    // Note: We don't have reliable line counts without content
+                    // This will be populated when TreeSitter integration is complete
+                    lines: null
+                };
+                
+                if (isPost) {
+                    // Update file in database
+                    await this.updateFile(toolInput.file_path, data.session_id);
+                }
+                break;
+            
+            case 'Read':
+            case 'Glob':
+            case 'Grep':
+                activity.category = 'exploration';
+                activity.action = isPost ? 'explored' : 'exploring';
+                activity.details = {
+                    target: toolInput.file_path || toolInput.pattern || toolInput.query
+                };
+                
+                // FUTURE: Read operations could potentially cache file content
+                // for subsequent parsing when TreeSitter is ready
+                if (isPost && toolInput.file_path) {
+                    await this.markFileExplored(toolInput.file_path, sessionId);
+                }
+                break;
+            
+            case 'Bash':
+                activity.category = 'command';
+                activity.action = isPost ? 'executed' : 'executing';
+                activity.details = {
+                    command: toolInput.command,
+                    description: toolInput.description
+                };
+                break;
+            
+            case 'Task':
+                activity.category = 'delegation';
+                activity.action = isPost ? 'completed' : 'delegating';
+                activity.details = {
+                    task: toolInput.task || 'Subagent task'
+                };
+                break;
+        }
+        
+        return activity;
+    }
 
-        if (createError) throw createError;
-        project = newProject;
-      } else if (error) {
-        throw error;
-      }
+    async handleFileOperation(data, sessionId) {
+        const toolInput = data.tool_input || {};
+        const filePath = toolInput.file_path;
+        
+        if (!filePath) return;
+        
+        // Update file record
+        const file = await this.updateFile(filePath, sessionId);
+        
+        // Check if we have full content (only for Write operations)
+        if (data.tool_name === 'Write' && toolInput.content) {
+            // We might have full content for new files
+            await this.attemptStructureParsing(filePath, toolInput.content, file, sessionId);
+        } else {
+            // For Edit/MultiEdit, we definitely don't have full content
+            // Mark file as needing structure update
+            await this.markFileNeedsStructureUpdate(file.id);
+            
+            // Log what we would parse if we had content
+            console.log(`[Structure Parse Pending] ${filePath} - Awaiting full content access`);
+        }
+        
+        // FUTURE: This is where TreeSitter hook data would be processed
+        // if (data.treesitter_structures) {
+        //     await this.processTreeSitterStructures(data.treesitter_structures, file, sessionId);
+        // }
+    }
 
-      // Cache the project - merge with existing memory properties
-      const existingProject = memoryStore.projects.get(projectPath);
-      if (existingProject) {
-        // Preserve memory-only properties, update database fields
-        Object.assign(existingProject, project);
-        // Ensure required memory properties exist
-        if (!existingProject.active_sessions) existingProject.active_sessions = new Set();
-        if (!existingProject.file_operations) existingProject.file_operations = { read: 0, write: 0, edit: 0 };
-        if (existingProject.command_operations === undefined) existingProject.command_operations = 0;
-      } else {
-        // First time - add expected memory properties
-        memoryStore.projects.set(projectPath, {
-          ...project,
-          active_sessions: new Set(),
-          file_operations: { read: 0, write: 0, edit: 0 },
-          command_operations: 0,
-          total_events: 0,
-          first_seen: new Date().toISOString(),
-          last_activity: new Date().toISOString()
+    async attemptStructureParsing(filePath, content, file, sessionId) {
+        // Only attempt parsing if we're confident we have full content
+        // This is mainly for new files created with Write
+        
+        const ext = path.extname(filePath);
+        const parseableExts = ['.py', '.js', '.jsx', '.ts', '.tsx'];
+        
+        if (!parseableExts.includes(ext)) {
+            console.log(`[Structure Parse Skip] ${filePath} - Unsupported extension`);
+            return;
+        }
+        
+        // Check if content looks complete (basic heuristic)
+        const looksComplete = content.includes('\n') && 
+                            (content.includes('function') || 
+                             content.includes('class') || 
+                             content.includes('const') ||
+                             content.includes('def'));
+        
+        if (!looksComplete) {
+            console.log(`[Structure Parse Skip] ${filePath} - Content appears incomplete`);
+            await this.markFileNeedsStructureUpdate(file.id);
+            return;
+        }
+        
+        try {
+            // Attempt to parse with existing parser
+            const parseResult = await this.runCodeParser(filePath, content);
+            
+            if (!parseResult.error) {
+                await this.storeCodeStructures(parseResult, file, sessionId);
+                console.log(`[Structure Parse Success] ${filePath} - ${parseResult.structures?.length || 0} structures found`);
+            } else {
+                console.log(`[Structure Parse Error] ${filePath} - ${parseResult.error}`);
+                await this.markFileNeedsStructureUpdate(file.id);
+            }
+        } catch (error) {
+            console.error(`[Structure Parse Failed] ${filePath}:`, error);
+            await this.markFileNeedsStructureUpdate(file.id);
+        }
+    }
+
+    async runCodeParser(filePath, content) {
+        // Existing parser implementation
+        // This will be replaced/enhanced with TreeSitter
+        return new Promise((resolve) => {
+            const parser = spawn('python3', [
+                path.join(__dirname, 'code_parser.py')
+            ]);
+            
+            let output = '';
+            let error = '';
+            
+            parser.stdout.on('data', (data) => {
+                output += data.toString();
+            });
+            
+            parser.stderr.on('data', (data) => {
+                error += data.toString();
+            });
+            
+            parser.on('close', (code) => {
+                if (code !== 0) {
+                    resolve({ error: error || 'Parser failed' });
+                } else {
+                    try {
+                        const result = JSON.parse(output);
+                        resolve(result);
+                    } catch (e) {
+                        resolve({ error: 'Failed to parse output' });
+                    }
+                }
+            });
+            
+            // Send input to parser
+            const input = JSON.stringify({ file_path: filePath, content });
+            parser.stdin.write(input);
+            parser.stdin.end();
         });
-      }
-      
-      return project;
-
-    } catch (error) {
-      console.error('Error ensuring project:', error);
-      return null;
-    }
-  }
-
-  async ensureSession(event, project) {
-    if (!supabase || !event.session_id) {
-      return null;
     }
 
-    const sessionId = event.session_id;
-
-    // Check cache first
-    if (memoryStore.sessions.has(sessionId)) {
-      const cachedSession = memoryStore.sessions.get(sessionId);
-      
-      // Only return cached dbRecord if it actually exists
-      if (cachedSession.dbRecord) {
-        return cachedSession.dbRecord;
-      }
-      // If no dbRecord, continue to database lookup/creation
-    }
-
-    try {
-      // Check if session exists in database
-      let { data: session, error } = await supabase
-        .from('agent_sessions')
-        .select('*')
-        .eq('session_id', sessionId)
-        .single();
-
-      if (error && error.code === 'PGRST116') {
-        // Session doesn't exist, create it
-        const { data: newSession, error: createError } = await supabase
-          .from('agent_sessions')
-          .insert({
+    async storeCodeStructures(parseResult, file, sessionId) {
+        // Store parsed structures in database
+        // This is ready for when we have reliable parsing
+        
+        if (!parseResult.structures || parseResult.structures.length === 0) {
+            return;
+        }
+        
+        // Delete existing structures for this file
+        await supabase
+            .from('code_structures')
+            .delete()
+            .eq('file_id', file.id);
+        
+        // Insert new structures
+        const structures = parseResult.structures.map(struct => ({
+            ...struct,
+            file_id: file.id,
+            project_id: file.project_id,
             session_id: sessionId,
-            project_id: project?.id,
-            transcript_path: event.transcript_path,
-            agent_type: 'main'
-          })
-          .select()
-          .single();
-
-        if (createError) {
-          throw createError;
+            id: this.generateUUID()
+        }));
+        
+        const { error } = await supabase
+            .from('code_structures')
+            .insert(structures);
+        
+        if (!error) {
+            // Update file metadata
+            await supabase
+                .from('files')
+                .update({
+                    has_structures: true,
+                    structure_count: structures.length,
+                    last_parsed_at: new Date().toISOString()
+                })
+                .eq('id', file.id);
         }
         
-        session = newSession;
-
-        // Create agent character for visualization
-        if (session) {
-          await this.createAgentCharacter(session.id);
+        // Store dependencies if available
+        if (parseResult.dependencies && parseResult.dependencies.length > 0) {
+            await this.storeDependencies(parseResult.dependencies, file, sessionId);
         }
-      } else if (error) {
-        throw error;
-      }
-
-      // Update cache
-      if (!memoryStore.sessions.has(sessionId)) {
-        memoryStore.sessions.set(sessionId, {
-          id: sessionId,
-          dbRecord: session,
-          started_at: new Date().toISOString(),
-          last_activity_at: new Date().toISOString(),
-          event_count: 0,
-          status: 'active',
-          project_dir: event.project_dir || event.cwd || event.raw_data?.cwd || event.raw_data?.project_dir,
-          transcript_path: event.transcript_path,
-          tools_used: new Set(),
-          files_modified: new Set(),
-          commands_executed: []
+        
+        // Broadcast update
+        this.broadcastUpdate({
+            type: 'structures_updated',
+            file_id: file.id,
+            file_path: file.file_path,
+            structure_count: structures.length,
+            sessionId,
+            timestamp: new Date().toISOString()
         });
-      } else {
-        memoryStore.sessions.get(sessionId).dbRecord = session;
-      }
-
-      return session;
-
-    } catch (error) {
-      console.error('Error ensuring session:', error);
-      return null;
     }
-  }
 
-  async createAgentCharacter(sessionId) {
-    if (!supabase) return;
+    async markFileNeedsStructureUpdate(fileId) {
+        // Mark that we need to parse this file when we have access to content
+        await supabase
+            .from('files')
+            .update({
+                has_structures: false,
+                needs_parsing: true,
+                last_modified_at: new Date().toISOString()
+            })
+            .eq('id', fileId);
+    }
 
-    try {
-      const names = ['Claude', 'Agent', 'Dev', 'Coder', 'Builder'];
-      const randomName = names[Math.floor(Math.random() * names.length)];
+    async markFileExplored(filePath, sessionId) {
+        // Track that a file has been explored (Read operation)
+        // FUTURE: Could cache content here for later parsing
+        
+        const file = await this.updateFile(filePath, sessionId);
+        
+        await supabase
+            .from('files')
+            .update({
+                last_explored_at: new Date().toISOString(),
+                explored_by: sessionId
+            })
+            .eq('id', file.id);
+    }
 
-      await supabase
-        .from('agent_characters')
-        .insert({
-          session_id: sessionId,
-          name: randomName,
-          avatar_type: 'default',
-          position: { x: Math.random() * 1000, y: 0, z: Math.random() * 1000 },
-          status: 'idle'
+    async storeDependencies(dependencies, file, sessionId) {
+        const projectId = file.project_id;
+        
+        for (const dep of dependencies) {
+            // Try to find target file
+            const { data: targetFile } = await supabase
+                .from('files')
+                .select('id')
+                .eq('file_path', dep.target_file)
+                .eq('project_id', projectId)
+                .single();
+            
+            if (targetFile || dep.is_external) {
+                await supabase
+                    .from('dependencies')
+                    .upsert({
+                        project_id: projectId,
+                        source_file_id: file.id,
+                        target_file_id: targetFile?.id || null,
+                        import_statement: dep.import_statement,
+                        import_type: dep.import_type,
+                        imported_items: dep.imported_items,
+                        is_external: dep.is_external,
+                        package_name: dep.package_name,
+                        route_strength: dep.route_strength,
+                        route_color: dep.route_color
+                    });
+            }
+        }
+    }
+
+    async updateFile(filePath, sessionId) {
+        if (!filePath) return;
+        
+        // Get or create project
+        const projectPath = this.extractProjectPath(filePath);
+        const { data: project } = await supabase
+            .from('projects')
+            .upsert({
+                name: path.basename(projectPath),
+                path: projectPath
+            })
+            .select()
+            .single();
+        
+        if (!project) return;
+        
+        // Calculate position for new files
+        const position = await this.calculateFilePosition(project.id);
+        
+        // Update or create file
+        const { data: file } = await supabase
+            .from('files')
+            .upsert({
+                project_id: project.id,
+                file_path: filePath,
+                file_name: path.basename(filePath),
+                extension: path.extname(filePath),
+                last_modified_by: sessionId,
+                position_x: position.x,
+                position_y: position.y,
+                building_type: this.getBuildingType(filePath),
+                building_color: this.getBuildingColor(filePath),
+                // Structure parsing status
+                has_structures: false,  // Default to false since we don't have content
+                needs_parsing: true      // Flag for future parsing
+            })
+            .select()
+            .single();
+        
+        return file;
+    }
+
+    async calculateFilePosition(projectId) {
+        // Get existing files to avoid overlap
+        const { data: files } = await supabase
+            .from('files')
+            .select('position_x, position_y')
+            .eq('project_id', projectId);
+        
+        // Simple spiral pattern for positioning
+        let x = 25, y = 25;
+        let dx = 1, dy = 0;
+        let steps = 1, stepCount = 0;
+        let turnCount = 0;
+        
+        while (files?.some(f => f.position_x === x && f.position_y === y)) {
+            x += dx * 3;
+            y += dy * 3;
+            stepCount++;
+            
+            if (stepCount === steps) {
+                stepCount = 0;
+                turnCount++;
+                
+                // Turn
+                const temp = dx;
+                dx = -dy;
+                dy = temp;
+                
+                if (turnCount === 2) {
+                    turnCount = 0;
+                    steps++;
+                }
+            }
+        }
+        
+        return { x, y };
+    }
+
+    async createAgentCharacter(agentSession) {
+        // Random starting position near center
+        const x = 23 + Math.floor(Math.random() * 5);
+        const y = 23 + Math.floor(Math.random() * 5);
+        
+        await supabase
+            .from('agent_characters')
+            .upsert({
+                session_id: agentSession.session_id,
+                name: `Agent-${agentSession.session_id.slice(0, 6)}`,
+                position_x: x,
+                position_y: y,
+                status: 'idle',
+                sprite_type: 'worker'
+            });
+    }
+
+    async trackSession(sessionId, hookType, data) {
+        // Update session activity
+        await supabase
+            .from('agent_sessions')
+            .update({
+                last_activity: new Date().toISOString(),
+                status: hookType === 'Stop' ? 'completed' : 'active'
+            })
+            .eq('session_id', sessionId);
+    }
+
+    async storeActivityEvent(sessionId, hookType, activity, rawData) {
+        await supabase
+            .from('activity_events')
+            .insert({
+                session_id: sessionId,
+                hook_type: hookType,
+                category: activity.category,
+                action: activity.action,
+                icon: activity.icon,
+                details: activity.details,
+                raw_data: rawData
+            });
+    }
+
+    handleUserPrompt(data) {
+        return {
+            category: 'interaction',
+            action: 'prompt_submitted',
+            icon: '💬',
+            details: {
+                prompt: data.prompt?.slice(0, 100) + '...'
+            }
+        };
+    }
+
+    handleStop(hookType, data) {
+        return {
+            category: 'lifecycle',
+            action: hookType.toLowerCase(),
+            icon: hookType === 'Stop' ? '🏁' : '🔚',
+            details: {
+                stop_hook_active: data.stop_hook_active
+            }
+        };
+    }
+
+    handleNotification(data) {
+        return {
+            category: 'system',
+            action: 'notification',
+            icon: '🔔',
+            details: {
+                message: data.message
+            }
+        };
+    }
+
+    handleCompact(data) {
+        return {
+            category: 'system',
+            action: 'memory_compact',
+            icon: '🗜️',
+            details: {
+                trigger: data.trigger,
+                custom_instructions: data.custom_instructions
+            }
+        };
+    }
+
+    getToolIcon(toolName) {
+        const icons = {
+            'Write': '✏️',
+            'Edit': '📝',
+            'MultiEdit': '📑',
+            'Read': '👁️',
+            'Bash': '⚡',
+            'Glob': '🔍',
+            'Grep': '🔎',
+            'Task': '🤖',
+            'WebSearch': '🌐',
+            'WebFetch': '🔗'
+        };
+        return icons[toolName] || '🔧';
+    }
+
+    getBuildingType(filePath) {
+        const ext = path.extname(filePath).toLowerCase();
+        const types = {
+            '.js': 'commercial',
+            '.jsx': 'commercial_modern',
+            '.ts': 'industrial',
+            '.tsx': 'industrial_modern',
+            '.py': 'laboratory',
+            '.json': 'datacenter',
+            '.md': 'library',
+            '.css': 'artstudio',
+            '.html': 'monument'
+        };
+        return types[ext] || 'residential';
+    }
+
+    getBuildingColor(filePath) {
+        const ext = path.extname(filePath).toLowerCase();
+        const colors = {
+            '.js': '#F7DF1E',
+            '.jsx': '#61DAFB',
+            '.ts': '#3178C6',
+            '.tsx': '#61DAFB',
+            '.py': '#3776AB',
+            '.json': '#000000',
+            '.md': '#083FA1',
+            '.css': '#1572B6',
+            '.html': '#E34C26'
+        };
+        return colors[ext] || '#808080';
+    }
+
+    extractProjectPath(filePath) {
+        // Extract project root from file path
+        const parts = filePath.split('/');
+        const projectMarkers = ['src', 'lib', 'app', 'components', 'pages'];
+        
+        for (let i = parts.length - 1; i >= 0; i--) {
+            if (projectMarkers.includes(parts[i])) {
+                return parts.slice(0, i).join('/');
+            }
+        }
+        
+        // Default to parent directory
+        return path.dirname(filePath);
+    }
+
+    broadcastUpdate(data) {
+        const message = JSON.stringify(data);
+        sseClients.forEach(client => {
+            client.write(`data: ${message}\n\n`);
         });
-    } catch (error) {
-      console.error('Error creating agent character:', error);
-    }
-  }
-
-  async updateAgentCharacter(sessionId, event) {
-    if (!supabase) return;
-
-    try {
-      await supabase
-        .from('agent_characters')
-        .update({
-          current_action: event.activity.action,
-          status: event.activity.category === 'tool_completion' ? 'working' : 'thinking',
-          speech_bubble: event.activity.description,
-          last_updated: new Date().toISOString()
-        })
-        .eq('session_id', sessionId);
-    } catch (error) {
-      console.error('Error updating agent character:', error);
-    }
-  }
-
-  async updateFileRecord(projectId, fileContext, sessionId) {
-    if (!supabase || !fileContext.file_path) return;
-
-    try {
-      const { data: existingFile } = await supabase
-        .from('files')
-        .select('*')
-        .eq('project_id', projectId)
-        .eq('path', fileContext.file_path)
-        .single();
-
-      if (existingFile) {
-        // Update existing file
-        await supabase
-          .from('files')
-          .update({
-            size_bytes: fileContext.content_size || existingFile.size_bytes,
-            lines_count: fileContext.line_count || existingFile.lines_count,
-            last_modified_at: new Date().toISOString(),
-            last_modified_by: sessionId
-          })
-          .eq('id', existingFile.id);
-      } else {
-        // Create new file record
-        await supabase
-          .from('files')
-          .insert({
-            project_id: projectId,
-            path: fileContext.file_path,
-            name: fileContext.file_name,
-            extension: fileContext.file_extension,
-            size_bytes: fileContext.content_size || 0,
-            lines_count: fileContext.line_count || 0,
-            building_type: this.determineBuildingType(fileContext.file_extension),
-            building_height: Math.floor(Math.random() * 10) + 1,
-            position: { 
-              x: Math.random() * 500 - 250, 
-              y: Math.random() * 500 - 250 
-            },
-            last_modified_by: sessionId
-          });
-      }
-    } catch (error) {
-      console.error('Error updating file record:', error);
-    }
-  }
-
-  determineBuildingType(extension) {
-    const buildingTypes = {
-      '.js': 'skyscraper',
-      '.ts': 'skyscraper',
-      '.py': 'factory',
-      '.html': 'house',
-      '.css': 'house',
-      '.json': 'warehouse',
-      '.md': 'library',
-      '.yaml': 'warehouse',
-      '.yml': 'warehouse'
-    };
-    return buildingTypes[extension] || 'office';
-  }
-
-  broadcastToSSE(event) {
-    const message = JSON.stringify({
-      type: 'new_event',
-      data: event
-    });
-
-    sseClients.forEach(client => {
-      client.write(`data: ${message}\n\n`);
-    });
-  }
-
-  // Keep all existing classification methods from your original code
-  extractFileContext(hookType, data) {
-    if (!['PreToolUse', 'PostToolUse'].includes(hookType)) return null;
-    
-    const toolName = data.tool_name;
-    const toolInput = data.tool_input || {};
-    
-    if (['Read', 'Write', 'Edit', 'MultiEdit'].includes(toolName)) {
-      const filePath = toolInput.file_path || '';
-      const fileName = path.basename(filePath);
-      const fileExt = path.extname(filePath).toLowerCase();
-      const dirPath = path.dirname(filePath);
-      
-      return {
-        file_path: filePath,
-        file_name: fileName,
-        file_extension: fileExt,
-        directory: dirPath,
-        file_type: this.classifyFileType(fileExt),
-        content_size: toolInput.content ? toolInput.content.length : null,
-        is_new_file: hookType === 'PreToolUse' && toolName === 'Write',
-        line_count: toolInput.content ? toolInput.content.split('\n').length : null
-      };
-    }
-    
-    return null;
-  }
-
-  extractCommandContext(hookType, data) {
-    if (!['PreToolUse', 'PostToolUse'].includes(hookType)) return null;
-    
-    const toolName = data.tool_name;
-    const toolInput = data.tool_input || {};
-    
-    if (toolName === 'Bash') {
-      const command = toolInput.command || '';
-      const parts = command.trim().split(/\s+/);
-      const baseCommand = parts[0];
-      const args = parts.slice(1);
-      
-      return {
-        full_command: command,
-        base_command: baseCommand,
-        arguments: args,
-        command_type: this.classifyCommandType(baseCommand),
-        is_dangerous: this.isDangerousCommand(command),
-        estimated_duration: this.estimateCommandDuration(baseCommand),
-        working_directory: data.cwd || data.project_dir
-      };
-    }
-    
-    return null;
-  }
-
-  async updateSessionContext(data) {
-    const sessionId = data.session_id;
-    if (!sessionId) return null;
-
-    if (!memoryStore.sessions.has(sessionId)) {
-      memoryStore.sessions.set(sessionId, {
-        id: sessionId,
-        started_at: new Date().toISOString(),
-        last_activity_at: new Date().toISOString(),
-        event_count: 0,
-        status: 'active',
-        project_dir: data.project_dir || data.cwd || data.raw_data?.cwd || data.raw_data?.project_dir,
-        transcript_path: data.transcript_path,
-        tools_used: new Set(),
-        files_modified: new Set(),
-        commands_executed: []
-      });
     }
 
-    const session = memoryStore.sessions.get(sessionId);
-    session.last_activity_at = new Date().toISOString();
-    session.event_count++;
-
-    // Track tools used
-    if (data.tool_name) {
-      session.tools_used.add(data.tool_name);
+    generateUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
     }
-
-    // Track files modified
-    if (data.tool_input?.file_path) {
-      session.files_modified.add(data.tool_input.file_path);
-    }
-
-    // Track commands
-    if (data.tool_name === 'Bash' && data.tool_input?.command) {
-      session.commands_executed.push({
-        command: data.tool_input.command,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    return {
-      session_duration_ms: Date.now() - new Date(session.started_at).getTime(),
-      events_in_session: session.event_count,
-      tools_used_count: session.tools_used.size,
-      files_modified_count: session.files_modified.size,
-      commands_executed_count: session.commands_executed.length
-    };
-  }
-
-  async updateProjectContext(data) {
-    // Use same path resolution logic as ensureProject
-    const projectDir = data.project_dir || data.cwd || data.raw_data?.cwd || data.raw_data?.project_dir;
-    if (!projectDir) return null;
-
-    const projectName = path.basename(projectDir);
-    
-    if (!memoryStore.projects.has(projectDir)) {
-      memoryStore.projects.set(projectDir, {
-        name: projectName,
-        path: projectDir,
-        first_seen: new Date().toISOString(),
-        last_activity: new Date().toISOString(),
-        total_events: 0,
-        active_sessions: new Set(),
-        file_operations: { read: 0, write: 0, edit: 0 },
-        command_operations: 0
-      });
-    }
-
-    const project = memoryStore.projects.get(projectDir);
-    
-    // Safety check to ensure project exists
-    if (!project) {
-      console.error('Project not found in cache:', { projectDir });
-      return null;
-    }
-    
-    project.last_activity = new Date().toISOString();
-    project.total_events++;
-    
-    if (data.session_id) {
-      project.active_sessions.add(data.session_id);
-    }
-
-    // Track operation types
-    if (data.tool_name === 'Bash') {
-      project.command_operations++;
-    } else if (['Read', 'Write', 'Edit', 'MultiEdit'].includes(data.tool_name)) {
-      const opType = data.tool_name.toLowerCase();
-      if (project.file_operations[opType] !== undefined) {
-        project.file_operations[opType]++;
-      }
-    }
-
-    return {
-      project_name: projectName,
-      total_events_in_project: project.total_events,
-      active_sessions_in_project: project.active_sessions.size,
-      project_age_ms: Date.now() - new Date(project.first_seen).getTime()
-    };
-  }
-
-  // Include all classification methods from your original code
-  classifyActivity(hookType, data) {
-    switch (hookType) {
-      case 'PreToolUse':
-        return this.classifyPreToolUse(data);
-      case 'PostToolUse':
-        return this.classifyPostToolUse(data);
-      case 'UserPromptSubmit':
-        return this.classifyUserPrompt(data);
-      case 'SessionStart':
-        return this.classifySessionStart(data);
-      case 'Stop':
-      case 'SubagentStop':
-        return this.classifyStop(hookType, data);
-      case 'Notification':
-        return this.classifyNotification(data);
-      case 'PreCompact':
-        return this.classifyPreCompact(data);
-      default:
-        return this.classifyUnknown(hookType, data);
-    }
-  }
-
-  classifyPreToolUse(data) {
-    const toolName = data.tool_name;
-    const toolInput = data.tool_input || {};
-    
-    const base = {
-      category: 'tool_preparation',
-      tool_name: toolName,
-      priority: 'high',
-      can_block: true
-    };
-
-    switch (toolName) {
-      case 'Read':
-        return {
-          ...base,
-          action: 'preparing_to_read_file',
-          icon: '📖',
-          description: `About to read ${path.basename(toolInput.file_path || 'unknown file')}`,
-          file_path: toolInput.file_path
-        };
-        
-      case 'Write':
-        return {
-          ...base,
-          action: 'preparing_to_write_file',
-          icon: '✏️',
-          description: `About to write ${path.basename(toolInput.file_path || 'unknown file')}`,
-          file_path: toolInput.file_path,
-          content_size: toolInput.content ? toolInput.content.length : 0
-        };
-        
-      case 'Edit':
-      case 'MultiEdit':
-        return {
-          ...base,
-          action: 'preparing_to_edit_file',
-          icon: '📝',
-          description: `About to edit ${path.basename(toolInput.file_path || 'unknown file')}`,
-          file_path: toolInput.file_path
-        };
-        
-      case 'Bash':
-        const command = toolInput.command || '';
-        return {
-          ...base,
-          action: 'preparing_to_execute_command',
-          icon: '⚡',
-          description: `About to run: ${command.substring(0, 50)}${command.length > 50 ? '...' : ''}`,
-          command: command,
-          command_type: this.classifyCommandType(command.split(' ')[0])
-        };
-        
-      case 'WebFetch':
-        return {
-          ...base,
-          action: 'preparing_to_fetch_url',
-          icon: '🌐',
-          description: `About to fetch ${toolInput.url || 'unknown URL'}`,
-          url: toolInput.url
-        };
-        
-      case 'WebSearch':
-        return {
-          ...base,
-          action: 'preparing_to_search_web',
-          icon: '🔍',
-          description: `About to search for "${toolInput.query || 'unknown'}"`,
-          query: toolInput.query
-        };
-        
-      default:
-        return {
-          ...base,
-          action: 'preparing_unknown_tool',
-          icon: '🔧',
-          description: `About to use ${toolName}`
-        };
-    }
-  }
-
-  classifyPostToolUse(data) {
-    const toolName = data.tool_name;
-    const toolResponse = data.tool_response || {};
-    const success = toolResponse.success !== false;
-    
-    const base = {
-      category: 'tool_completion',
-      tool_name: toolName,
-      success: success,
-      priority: success ? 'high' : 'critical'
-    };
-
-    if (!success) {
-      return {
-        ...base,
-        action: 'tool_failed',
-        icon: '❌',
-        description: `Failed to complete ${toolName}`,
-        error: toolResponse.error || 'Unknown error'
-      };
-    }
-
-    switch (toolName) {
-      case 'Read':
-        return {
-          ...base,
-          action: 'completed_file_read',
-          icon: '✅',
-          description: `Successfully read file`,
-          content_size: toolResponse.content ? toolResponse.content.length : 0
-        };
-        
-      case 'Write':
-        return {
-          ...base,
-          action: 'completed_file_write',
-          icon: '💾',
-          description: `Successfully wrote file`,
-          file_path: toolResponse.filePath
-        };
-        
-      case 'Edit':
-      case 'MultiEdit':
-        return {
-          ...base,
-          action: 'completed_file_edit',
-          icon: '📝',
-          description: `Successfully edited file`,
-          file_path: toolResponse.filePath
-        };
-        
-      case 'Bash':
-        return {
-          ...base,
-          action: 'completed_command_execution',
-          icon: '⚡',
-          description: `Command completed`,
-          exit_code: toolResponse.exitCode || 0,
-          output_size: toolResponse.stdout ? toolResponse.stdout.length : 0
-        };
-        
-      default:
-        return {
-          ...base,
-          action: 'completed_unknown_tool',
-          icon: '✅',
-          description: `Completed ${toolName}`
-        };
-    }
-  }
-
-  classifyUserPrompt(data) {
-    const prompt = data.prompt || '';
-    const wordCount = prompt.split(/\s+/).length;
-    
-    return {
-      category: 'user_interaction',
-      action: 'submit_prompt',
-      icon: '💬',
-      description: `User submitted prompt (${wordCount} words)`,
-      prompt_length: prompt.length,
-      word_count: wordCount,
-      priority: 'high',
-      contains_code: /```/.test(prompt),
-      contains_file_mention: /\.(js|py|ts|html|css|md|json|yaml|yml)/.test(prompt)
-    };
-  }
-
-  classifySessionStart(data) {
-    const source = data.source || 'unknown';
-    
-    return {
-      category: 'session_lifecycle',
-      action: `session_start_${source}`,
-      icon: source === 'startup' ? '🚀' : '🔄',
-      description: `Session started (${source})`,
-      source: source,
-      priority: 'high'
-    };
-  }
-
-  classifyStop(hookType, data) {
-    return {
-      category: hookType === 'SubagentStop' ? 'subagent_lifecycle' : 'agent_lifecycle',
-      action: hookType === 'SubagentStop' ? 'subagent_stop' : 'agent_stop',
-      icon: hookType === 'SubagentStop' ? '🤖' : '⏹️',
-      description: `${hookType === 'SubagentStop' ? 'Subagent' : 'Agent'} stopped`,
-      priority: 'medium',
-      stop_hook_active: data.stop_hook_active
-    };
-  }
-
-  classifyNotification(data) {
-    const message = data.message || '';
-    
-    return {
-      category: 'system_notification',
-      action: 'notify',
-      icon: '🔔',
-      description: message,
-      message: message,
-      priority: 'low',
-      notification_type: this.classifyNotificationType(message)
-    };
-  }
-
-  classifyPreCompact(data) {
-    const trigger = data.trigger || 'unknown';
-    
-    return {
-      category: 'memory_management',
-      action: `compact_${trigger}`,
-      icon: '🗜️',
-      description: `Memory compaction (${trigger})`,
-      trigger: trigger,
-      priority: 'medium',
-      custom_instructions: data.custom_instructions
-    };
-  }
-
-  classifyUnknown(hookType, data) {
-    return {
-      category: 'unknown',
-      action: 'unknown_hook',
-      icon: '❓',
-      description: `Unknown hook: ${hookType}`,
-      priority: 'low'
-    };
-  }
-
-  // Utility classification methods
-  classifyFileType(extension) {
-    const types = {
-      '.js': 'javascript',
-      '.ts': 'typescript', 
-      '.py': 'python',
-      '.html': 'html',
-      '.css': 'css',
-      '.md': 'markdown',
-      '.json': 'json',
-      '.yaml': 'yaml',
-      '.yml': 'yaml',
-      '.txt': 'text',
-      '.log': 'log'
-    };
-    return types[extension] || 'unknown';
-  }
-
-  classifyCommandType(command) {
-    const types = {
-      'git': 'version_control',
-      'npm': 'package_manager',
-      'pip': 'package_manager',
-      'yarn': 'package_manager',
-      'docker': 'containerization',
-      'kubectl': 'kubernetes',
-      'terraform': 'infrastructure',
-      'ls': 'file_system',
-      'cd': 'navigation',
-      'mkdir': 'file_system',
-      'rm': 'file_system',
-      'cp': 'file_system',
-      'mv': 'file_system',
-      'cat': 'file_system',
-      'grep': 'search',
-      'find': 'search',
-      'curl': 'network',
-      'wget': 'network'
-    };
-    return types[command] || 'unknown';
-  }
-
-  isDangerousCommand(command) {
-    const dangerous = ['rm -rf', 'sudo rm', 'format', 'del /f', '> /dev/null'];
-    return dangerous.some(pattern => command.includes(pattern));
-  }
-
-  estimateCommandDuration(command) {
-    const durations = {
-      'npm install': 'long',
-      'pip install': 'medium',
-      'git clone': 'medium',
-      'docker build': 'long',
-      'terraform apply': 'long',
-      'ls': 'instant',
-      'cd': 'instant',
-      'cat': 'instant'
-    };
-    return durations[command] || 'short';
-  }
-
-  classifyNotificationType(message) {
-    if (message.includes('permission')) return 'permission_request';
-    if (message.includes('waiting')) return 'waiting_for_input';
-    if (message.includes('error')) return 'error';
-    return 'general';
-  }
-
-  logEvent(event) {
-    const session = event.session_id ? event.session_id.substring(0, 8) : 'unknown';
-    const project = event.project_context?.project_name || 'unknown';
-    
-    console.log(`📨 ${event.hook_type} | ${event.activity.action} | ${project} | Session: ${session}`);
-    
-    if (event.activity.description) {
-      console.log(`   └─ ${event.activity.description}`);
-    }
-    
-    if (supabase) {
-      console.log(`   └─ 💾 Queued for database`);
-    }
-  }
 }
 
-const processor = new EnhancedHookProcessor();
+// Initialize processor
+const processor = new HookProcessor();
 
-// =====================================================
-// HOOK ENDPOINTS (keeping your existing structure)
-// =====================================================
-
-const hookTypes = [
-  'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 
-  'Stop', 'SubagentStop', 'SessionStart', 
-  'Notification', 'PreCompact'
-];
-
-hookTypes.forEach(hookType => {
-  app.post(`/api/webhooks/claude/${hookType}`, async (req, res) => {
-    try {
-      const event = await processor.processEvent(hookType, req.body);
-      res.json({ success: true, event_id: event.id });
-    } catch (error) {
-      console.error(`Error processing ${hookType}:`, error);
-      res.status(400).json({ success: false, error: error.message });
-    }
-  });
+// Routes
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+        parsing_status: 'limited',  // Indicates we're in file-only mode
+        treesitter_ready: false     // Will be true when TreeSitter is integrated
+    });
 });
 
-// =====================================================
-// REAL-TIME SSE ENDPOINT
-// =====================================================
-
+// SSE endpoint for real-time updates
 app.get('/api/events/stream', (req, res) => {
-  // Set up SSE headers
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*'
-  });
-
-  // Send initial connection message
-  res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
-
-  // Add client to set
-  sseClients.add(res);
-
-  // Send heartbeat every 30 seconds
-  const heartbeat = setInterval(() => {
-    res.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: new Date().toISOString() })}\n\n`);
-  }, 30000);
-
-  // Clean up on client disconnect
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    sseClients.delete(res);
-  });
-});
-
-// =====================================================
-// ENHANCED API ENDPOINTS WITH DATABASE SUPPORT
-// =====================================================
-
-// Get events (from memory or database)
-app.get('/api/events', async (req, res) => {
-  const limit = parseInt(req.query.limit) || 50;
-  
-  if (supabase && req.query.from === 'db') {
-    try {
-      const { data: events, error } = await supabase
-        .from('activity_events')
-        .select(`
-          *,
-          agent_sessions(session_id, status),
-          projects(name, path)
-        `)
-        .order('timestamp', { ascending: false })
-        .limit(limit);
-
-      if (error) throw error;
-      res.json({ events, total: events.length, source: 'database' });
-    } catch (error) {
-      console.error('Database query error:', error);
-      res.status(500).json({ error: 'Database query failed' });
-    }
-  } else {
-    // Fallback to memory
-    res.json({ 
-      events: memoryStore.events.slice(-limit),
-      total: memoryStore.events.length,
-      source: 'memory'
-    });
-  }
-});
-
-// Get detailed events
-app.get('/api/events/detailed', async (req, res) => {
-  const limit = parseInt(req.query.limit) || 20;
-  
-  if (supabase && req.query.from === 'db') {
-    try {
-      const { data: events, error } = await supabase
-        .from('activity_events')
-        .select(`
-          *,
-          agent_sessions(*),
-          projects(*)
-        `)
-        .order('timestamp', { ascending: false })
-        .limit(limit);
-
-      if (error) throw error;
-      res.json({ events, total: events.length, source: 'database' });
-    } catch (error) {
-      console.error('Database query error:', error);
-      res.status(500).json({ error: 'Database query failed' });
-    }
-  } else {
-    // Fallback to memory with session details
-    const detailedEvents = memoryStore.events.slice(-limit).map(event => ({
-      ...event,
-      session_summary: memoryStore.sessions.get(event.session_id) ? {
-        ...Object.fromEntries(
-          Object.entries(memoryStore.sessions.get(event.session_id)).map(([k, v]) => 
-            [k, v instanceof Set ? Array.from(v) : v]
-          )
-        )
-      } : null
-    }));
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
     
-    res.json({ 
-      events: detailedEvents,
-      total: memoryStore.events.length,
-      source: 'memory'
-    });
-  }
-});
-
-// Get sessions
-app.get('/api/sessions', async (req, res) => {
-  if (supabase && req.query.from === 'db') {
-    try {
-      const { data: sessions, error } = await supabase
-        .from('agent_sessions')
-        .select(`
-          *,
-          projects(name, path),
-          _count:activity_events(count)
-        `)
-        .order('started_at', { ascending: false });
-
-      if (error) throw error;
-      res.json({ sessions, source: 'database' });
-    } catch (error) {
-      console.error('Database query error:', error);
-      res.status(500).json({ error: 'Database query failed' });
-    }
-  } else {
-    const sessionArray = Array.from(memoryStore.sessions.values()).map(session => ({
-      ...session,
-      tools_used: Array.from(session.tools_used),
-      files_modified: Array.from(session.files_modified)
-    }));
+    // Send initial connection message
+    res.write('data: {"type":"connected","timestamp":"' + new Date().toISOString() + '"}\n\n');
     
-    res.json({ 
-      sessions: sessionArray,
-      active_count: sessionArray.filter(s => s.status === 'active').length,
-      source: 'memory'
-    });
-  }
-});
-
-// Get projects
-app.get('/api/projects', async (req, res) => {
-  if (supabase && req.query.from === 'db') {
-    try {
-      const { data: projects, error } = await supabase
-        .from('projects')
-        .select(`
-          *,
-          agent_sessions(id, status),
-          files(count)
-        `)
-        .order('last_activity_at', { ascending: false });
-
-      if (error) throw error;
-      res.json({ projects, source: 'database' });
-    } catch (error) {
-      console.error('Database query error:', error);
-      res.status(500).json({ error: 'Database query failed' });
-    }
-  } else {
-    const projectArray = Array.from(memoryStore.projects.values()).map(project => ({
-      ...project,
-      active_sessions: Array.from(project.active_sessions)
-    }));
+    // Add client to set
+    sseClients.add(res);
     
-    res.json({ 
-      projects: projectArray,
-      total_projects: projectArray.length,
-      source: 'memory'
+    // Remove client on disconnect
+    req.on('close', () => {
+        sseClients.delete(res);
     });
-  }
 });
 
-// Enhanced dashboard with database support
+// Claude Code webhook endpoint
+app.post('/api/webhooks/claude/:hookType', async (req, res) => {
+    const { hookType } = req.params;
+    const data = req.body;
+    
+    try {
+        const activity = await processor.processHook(hookType, data);
+        res.json({ success: true, activity });
+    } catch (error) {
+        console.error(`Error processing ${hookType}:`, error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get code structures for a file
+// NOTE: This will return empty until we have reliable parsing
+app.get('/api/structures/:fileId', async (req, res) => {
+    const { fileId } = req.params;
+    
+    try {
+        const { data: structures, error } = await supabase
+            .from('code_structures')
+            .select('*')
+            .eq('file_id', fileId)
+            .order('depth', { ascending: true })
+            .order('start_line', { ascending: true });
+        
+        if (error) throw error;
+        
+        if (!structures || structures.length === 0) {
+            // Return placeholder message
+            res.json({ 
+                structures: [],
+                message: 'Structure parsing pending - awaiting content access',
+                parsing_available: false
+            });
+        } else {
+            res.json({ 
+                structures,
+                parsing_available: true
+            });
+        }
+    } catch (error) {
+        console.error('Error fetching structures:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get files with parsing status
+app.get('/api/files/:projectId', async (req, res) => {
+    const { projectId } = req.params;
+    
+    try {
+        const { data: files, error } = await supabase
+            .from('files')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('last_modified_at', { ascending: false });
+        
+        if (error) throw error;
+        
+        // Add parsing status to response
+        const filesWithStatus = files.map(file => ({
+            ...file,
+            parsing_status: file.has_structures ? 'complete' : 
+                           file.needs_parsing ? 'pending' : 'not_started'
+        }));
+        
+        res.json({ files: filesWithStatus });
+    } catch (error) {
+        console.error('Error fetching files:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// FUTURE: Endpoint for TreeSitter structure updates
+// This will be called when we have TreeSitter integration
+app.post('/api/structures/update', async (req, res) => {
+    const { file_path, structures, session_id } = req.body;
+    
+    // Stub for future TreeSitter integration
+    res.json({ 
+        success: false, 
+        message: 'TreeSitter integration pending',
+        expected_payload: {
+            file_path: 'string',
+            structures: 'array of TreeSitter nodes',
+            session_id: 'string'
+        }
+    });
+});
+
+// Get dependencies for a project
+app.get('/api/dependencies/:projectId', async (req, res) => {
+    const { projectId } = req.params;
+    
+    try {
+        const { data: dependencies, error } = await supabase
+            .from('dependencies')
+            .select(`
+                *,
+                source_file:files!source_file_id(file_path, file_name),
+                target_file:files!target_file_id(file_path, file_name)
+            `)
+            .eq('project_id', projectId);
+        
+        if (error) throw error;
+        
+        // Note: Dependencies will be limited until we can parse imports
+        res.json({ 
+            dependencies: dependencies || [],
+            parsing_limited: true,
+            message: 'Import parsing requires full file content access'
+        });
+    } catch (error) {
+        console.error('Error fetching dependencies:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Dashboard endpoint with parsing status
 app.get('/api/dashboard', async (req, res) => {
-  const recentEvents = memoryStore.events.slice(-10);
-  const activeSessions = Array.from(memoryStore.sessions.values()).filter(s => s.status === 'active');
-  const activeProjects = Array.from(memoryStore.projects.values()).filter(p => p.active_sessions.size > 0);
-  
-  const dashboard = {
-    recent_events: recentEvents,
-    stats: {
-      total_events: memoryStore.events.length,
-      active_sessions: activeSessions.length,
-      active_projects: activeProjects.length,
-      hook_types: [...new Set(memoryStore.events.map(e => e.hook_type))],
-      tools_used: [...new Set(memoryStore.events.map(e => e.activity.tool_name).filter(Boolean))],
-      file_operations: memoryStore.events.filter(e => e.file_context).length,
-      command_operations: memoryStore.events.filter(e => e.command_context).length,
-      database_connected: !!supabase,
-      database_writes: serverStats.dbWrites,
-      database_errors: serverStats.dbErrors
-    },
-    active_sessions: activeSessions.map(s => ({
-      ...s,
-      tools_used: Array.from(s.tools_used),
-      files_modified: Array.from(s.files_modified)
-    })),
-    active_projects: activeProjects.map(p => ({
-      ...p,
-      active_sessions: Array.from(p.active_sessions)
-    })),
-    server: {
-      uptime: process.uptime(),
-      memory_usage: process.memoryUsage(),
-      events_processed: serverStats.eventsProcessed,
-      last_event_time: serverStats.lastEventTime,
-      sse_clients: sseClients.size
-    }
-  };
-  
-  res.json(dashboard);
-});
-
-// Health check with database status
-app.get('/api/health', async (req, res) => {
-  let dbStatus = 'not_configured';
-  
-  if (supabase) {
     try {
-      const { count, error } = await supabase
-        .from('activity_events')
-        .select('*', { count: 'exact', head: true });
-      
-      dbStatus = error ? 'error' : 'connected';
-    } catch {
-      dbStatus = 'error';
+        // Get stats
+        const [sessions, files, structures, events] = await Promise.all([
+            supabase.from('agent_sessions').select('*', { count: 'exact' }),
+            supabase.from('files').select('*', { count: 'exact' }),
+            supabase.from('code_structures').select('*', { count: 'exact' }),
+            supabase.from('activity_events').select('*').order('created_at', { ascending: false }).limit(50)
+        ]);
+        
+        // Count files needing parsing
+        const { count: needsParsing } = await supabase
+            .from('files')
+            .select('*', { count: 'exact', head: true })
+            .eq('needs_parsing', true);
+        
+        res.json({
+            stats: {
+                active_sessions: sessions.count || 0,
+                total_files: files.count || 0,
+                total_structures: structures.count || 0,
+                files_pending_parsing: needsParsing || 0,
+                recent_events: events.data || []
+            },
+            capabilities: {
+                file_tracking: true,
+                structure_parsing: 'limited',  // Only for new files with Write
+                dependency_tracking: 'limited',
+                treesitter_ready: false
+            },
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Dashboard error:', error);
+        res.status(500).json({ error: error.message });
     }
-  }
-  
-  res.json({ 
-    status: 'healthy',
-    events_received: memoryStore.events.length,
-    active_sessions: Array.from(memoryStore.sessions.values()).filter(s => s.status === 'active').length,
-    uptime: process.uptime(),
-    memory_usage: process.memoryUsage(),
-    database: {
-      status: dbStatus,
-      writes: serverStats.dbWrites,
-      errors: serverStats.dbErrors
-    },
-    realtime: {
-      sse_clients: sseClients.size
-    }
-  });
-});
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: 'Agentic Frontier - Enhanced Hook Processing API with Supabase',
-    version: '2.0.0',
-    features: [
-      'Real-time Claude Code hook processing',
-      'Supabase database persistence',
-      'Server-Sent Events (SSE) for real-time updates',
-      'Session and project tracking',
-      'Agent character visualization support',
-      'File-to-building mapping'
-    ],
-    endpoints: {
-      dashboard: '/api/dashboard',
-      events: '/api/events',
-      detailed_events: '/api/events/detailed',
-      event_stream: '/api/events/stream (SSE)',
-      sessions: '/api/sessions',
-      projects: '/api/projects',
-      health: '/api/health'
-    },
-    database: {
-      connected: !!supabase,
-      status: supabase ? 'Check /api/health for details' : 'Not configured'
-    }
-  });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Agentic Frontier Enhanced API v2.0 running on http://localhost:${PORT}`);
-  console.log(`📊 Dashboard: http://localhost:${PORT}/api/dashboard`);
-  console.log(`🔍 Detailed Events: http://localhost:${PORT}/api/events/detailed`);
-  console.log(`📋 Sessions: http://localhost:${PORT}/api/sessions`);
-  console.log(`🏗️ Projects: http://localhost:${PORT}/api/projects`);
-  console.log(`📡 Real-time Stream: http://localhost:${PORT}/api/events/stream`);
-  console.log(`💓 Health: http://localhost:${PORT}/api/health`);
-  
-  if (supabase) {
-    console.log(`✅ Supabase database connected`);
-    console.log(`💾 Events will be persisted to database`);
-  } else {
-    console.log(`⚠️ Supabase not configured - using in-memory storage only`);
-    console.log(`   Set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env.local`);
-  }
-  
-  console.log(`🎯 Ready to receive enhanced Claude Code hooks!`);
+    console.log(`🚀 Agentic Frontier backend running on http://localhost:${PORT}`);
+    console.log(`📡 SSE stream available at http://localhost:${PORT}/api/events/stream`);
+    console.log(`🔧 Webhook endpoint: http://localhost:${PORT}/api/webhooks/claude/:hookType`);
+    console.log('\n⚠️  Phase IV: File-level visualization active');
+    console.log('   - Tracking file modifications and agent activity');
+    console.log('   - Code structure parsing: LIMITED (only new files)');
+    console.log('   - Awaiting TreeSitter integration for full parsing');
+    console.log('\n📋 Files will be marked for parsing when content becomes available');
 });
