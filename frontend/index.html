@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic Frontier - Code Civilization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            overflow: hidden;
+            color: white;
+        }
+        
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 20px;
+            background: linear-gradient(180deg, rgba(0,0,0,0.7) 0%, transparent 100%);
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: all;
+        }
+        
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .stats {
+            display: flex;
+            gap: 20px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        
+        #activity-feed {
+            position: absolute;
+            right: 20px;
+            top: 100px;
+            width: 300px;
+            max-height: 400px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 10px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
+            overflow-y: auto;
+            pointer-events: all;
+        }
+        
+        .activity-item {
+            padding: 8px;
+            margin-bottom: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 5px;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .activity-icon {
+            display: inline-block;
+            margin-right: 8px;
+        }
+        
+        .activity-text {
+            font-size: 13px;
+        }
+        
+        .activity-time {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+        
+        #connection-status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            padding: 8px 16px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.connected {
+            background: #10b981;
+        }
+        
+        .status-dot.disconnected {
+            background: #ef4444;
+            animation: none;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        #loading-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        
+        .loader {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+        
+        /* Phase IV Status Indicator */
+        #parsing-status {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 20px;
+            font-size: 11px;
+            color: #FFD700;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .parsing-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #FFD700;
+            animation: pulse 2s infinite;
+        }
+        
+        /* Controls hint */
+        #controls-hint {
+            position: absolute;
+            bottom: 60px;
+            left: 20px;
+            padding: 10px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 8px;
+            font-size: 11px;
+            opacity: 0.8;
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-item {
+            margin: 2px 0;
+        }
+        
+        .key {
+            display: inline-block;
+            padding: 2px 4px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+            font-family: monospace;
+            margin-right: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="loading-screen">
+            <div class="loader"></div>
+            <div class="loading-text">Building the code frontier...</div>
+        </div>
+        
+        <div id="ui-overlay">
+            <div class="header">
+                <div class="title">🗺️ Agentic Frontier</div>
+                <div class="stats">
+                    <div class="stat">
+                        <div class="stat-value" id="active-agents">0</div>
+                        <div class="stat-label">Active Agents</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="total-files">0</div>
+                        <div class="stat-label">Settlements</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="events-count">0</div>
+                        <div class="stat-label">Activities</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="pending-parse">0</div>
+                        <div class="stat-label">Pending Parse</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="activity-feed">
+            <h3 style="margin-bottom: 10px; font-size: 14px; opacity: 0.8;">Activity Feed</h3>
+            <div id="activity-list"></div>
+        </div>
+        
+        <div id="connection-status">
+            <div class="status-dot disconnected" id="status-dot"></div>
+            <span id="status-text">Connecting...</span>
+        </div>
+        
+        <div id="parsing-status">
+            <div class="parsing-indicator"></div>
+            <span>Code parsing awaiting TreeSitter</span>
+        </div>
+        
+        <div id="controls-hint">
+            <div class="control-item"><span class="key">↑↓←→</span> or <span class="key">WASD</span> Pan camera</div>
+            <div class="control-item"><span class="key">Scroll</span> Zoom in/out</div>
+            <div class="control-item"><span class="key">Click</span> Select unit/settlement</div>
+            <div class="control-item"><span class="key">Right Click</span> Drag to pan</div>
+            <div class="control-item"><span class="key">ESC</span> Deselect</div>
+        </div>
+    </div>
+    
+    <script type="module" src="/src/main.ts"></script>
+    
+    <script>
+        // Add console message about parsing status
+        console.log('%c⚠️ Phase IV Refactored', 'color: #FFD700; font-size: 16px; font-weight: bold;');
+        console.log('%cFile-level visualization active. Code structure parsing disabled pending TreeSitter integration.', 'color: #FFD700;');
+        console.log('%cSettlements represent files. Districts/buildings will appear when parsing is available.', 'color: #FFD700;');
+        
+        // Update pending parse count periodically (would connect to backend)
+        setInterval(() => {
+            // This would fetch from backend API
+            // For now just showing the UI element exists
+        }, 5000);
+    </script>
+</body>
+</html>

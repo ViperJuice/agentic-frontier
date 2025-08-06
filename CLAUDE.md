@@ -4,96 +4,186 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agentic Frontier is a real-time visualization platform that monitors Claude Code agent workflows through webhook integration. The system captures all Claude Code events and will eventually display them as an interactive city-building visualization.
+Agentic Frontier is a real-time visualization platform that monitors Claude Code agent workflows through webhook integration. The system captures all Claude Code events and displays them as an interactive hexagonal world visualization using Phaser.js.
 
 ## Development Commands
 
-### Backend Server
+### Backend (TypeScript)
 ```bash
-# Install dependencies
-cd backend && npm install
+# Start development server with hot reload
+cd backend && npm run dev
 
-# Start the server (runs on port 3001)
-cd backend && node server.js
+# Build TypeScript
+cd backend && npm run build
 
-# The server provides:
-# - Webhook endpoints at /api/webhooks/claude/{HookType}
-# - Event retrieval at /api/events
-# - Dashboard data at /api/dashboard
+# Run production build
+cd backend && npm start
+
+# Type checking
+cd backend && npm run typecheck
+
+# Test database connection
+cd backend && npm run test-db
 ```
 
-### Testing
-No test framework is currently implemented. The test script in package.json is a placeholder.
+### Frontend (TypeScript + Vite)
+```bash
+# Start development server
+cd frontend && npm run dev
+
+# Build for production
+cd frontend && npm run build
+
+# Preview production build
+cd frontend && npm run preview
+```
+
+### Supabase Database
+```bash
+# Start local Supabase
+supabase start
+
+# Check status
+supabase status
+
+# Run migrations
+cd backend && npm run migrate
+
+# Generate TypeScript types from schema
+cd backend && npm run types
+```
 
 ## Architecture
 
-### Hook Integration Flow
-1. Claude Code triggers hooks during operation
-2. Hooks send POST requests via cURL to `http://localhost:3001/api/webhooks/claude/{HookType}`
-3. Backend `HookProcessor` class processes and classifies events
-4. Events are stored in memory (temporary - will migrate to Supabase)
+### Backend Structure (TypeScript)
+The backend has been refactored from a monolithic 915-line server.js into modular TypeScript:
 
-### Key Components
+```
+backend/src/
+├── processors/
+│   └── HookProcessor.ts      # Core webhook processing logic
+├── services/
+│   ├── DatabaseService.ts    # Supabase operations
+│   ├── FileService.ts        # File management utilities
+│   └── SSEService.ts         # Server-sent events handling
+├── routes/
+│   ├── webhooks.ts           # Claude webhook endpoints
+│   └── api.ts                # API endpoints
+├── types/
+│   └── index.ts              # All TypeScript definitions
+├── utils/
+│   └── index.ts              # Shared utilities
+└── app.ts                    # Main application entry
+```
 
-**backend/server.js**
-- `HookProcessor` class: Event processing and classification engine
-- Supported hook types: PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, Stop, SubagentStop, Notification, PreCompact
-- API endpoints serve processed events and dashboard statistics
+### Frontend Structure (TypeScript + Phaser)
+```
+frontend/src/
+├── scenes/
+│   └── hexworldscene.ts     # Main hexagonal world visualization
+├── utils/
+│   └── device-detect.ts     # Device capability detection
+└── main.ts                   # Application entry point
+```
+
+### Hook Processing Flow
+1. Claude Code triggers hooks → POST to `/api/webhooks/claude/{HookType}`
+2. `HookProcessor` classifies events into semantic activities
+3. `DatabaseService` persists to Supabase
+4. `SSEService` broadcasts real-time updates
+5. Frontend receives SSE events and updates visualization
+
+### Database Schema (Supabase)
+**Core Tables:**
+- `projects` - Project metadata
+- `agent_sessions` - Claude Code sessions
+- `activity_events` - All captured events
+- `agent_characters` - Virtual agents for visualization
+- `files` - File-to-building mapping
+
+**Extended Tables (Phase IV):**
+- `code_structures` - Classes, methods, functions (pending TreeSitter)
+- `dependencies` - Import relationships
+- `call_graph` - Function call relationships
+
+## Key Implementation Details
 
 ### Event Classification
-The `classifyActivity()` method in HookProcessor maps tool usage to semantic activities:
-- File operations → 🔍 exploring, 📝 editing, ✏️ writing
-- Code execution → 🏃 executing, 🧪 testing
-- Web operations → 🌐 fetching, 🔎 searching
-- Task management → 📋 planning
+The `HookProcessor.determineAgentType()` method maps activities to agent types:
+- **Scout**: Search, find, explore operations
+- **Builder**: Create, write, implement operations
+- **Warrior**: Fix, refactor, debug operations
+- **Settler**: Setup, initialize, configure operations
 
-### API Response Format
-Events include:
-- `id`: Unique identifier
-- `timestamp`: ISO 8601 format
-- `hookType`: Original Claude Code hook type
-- `activity`: Classified activity with category, action, and icon
-- `sessionId`: Session tracking identifier
-- `data`: Original hook payload
+### Hexagonal World Visualization
+- 1000x1000 hex tile map using Phaser.js
+- Terrain generation based on position hash
+- Camera controls with arrow keys/WASD
+- Optimized for different device capabilities (Raspberry Pi, mobile, desktop)
 
-## Development Guidelines
+### Real-time Updates
+SSE connection established in `main.ts`:
+- Auto-reconnects on failure
+- Handles activity events and structure updates
+- Updates UI statistics in real-time
 
-### Adding New Features
-1. Event classification improvements go in `HookProcessor.classifyActivity()`
-2. New API endpoints follow Express.js patterns in server.js
-3. Maintain backward compatibility with existing webhook format
+## Current Limitations & Status
 
-### Current Limitations
-- Events are stored in memory only (lost on restart)
-- No frontend implementation yet
-- Uses hardcoded dev authorization token "dev-key-123"
-- No database persistence (planned for Phase II with Supabase)
+### Working Features
+- ✅ Full TypeScript migration complete
+- ✅ Webhook processing and event classification
+- ✅ Supabase database persistence
+- ✅ Real-time SSE broadcasting
+- ✅ Hexagonal world visualization (1000x1000 tiles fully implemented)
+- ✅ Device capability detection
+- ✅ Camera controls and terrain generation
 
-### Planned Architecture Changes
-- **Phase II**: Supabase database integration, Vercel deployment
-- **Phase III**: Phaser.js visualization engine, agent character system
-- **Phase IV**: Full metropolitan visualization with file-to-building mapping
+### Pending Implementation
+- ⏳ TreeSitter integration for code parsing (framework ready, awaiting hook data)
+- ⏳ Code structure visualization (files marked for parsing when available)
+- ⏳ Agent movement in visualization
+- ⏳ Interactive building selection
 
-## Hook Configuration
+## Environment Configuration
 
-The `.claude/settings.json` file contains webhook configurations for all Claude Code lifecycle events. Each hook sends a cURL POST request with:
-- 2-second timeout
-- Authorization header with Bearer token
-- JSON content type
+### Backend (.env.local)
+```bash
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_KEY=your_service_key
+SUPABASE_ANON_KEY=your_anon_key
+PORT=3001
+NODE_ENV=development
+ENABLE_REALTIME=true
+```
 
-This configuration must be copied to any Claude Code project you want to monitor.
+### Frontend (.env.local)
+```bash
+VITE_SUPABASE_URL=http://localhost:54321
+VITE_SUPABASE_ANON_KEY=your_anon_key
+VITE_API_URL=http://localhost:3001
+```
 
-## Error Handling
+**Note**: Example environment files are provided as `.env.local.example` in both backend and frontend directories
 
-The server includes basic error handling:
-- Invalid webhook data returns 400
-- Server errors return 500
-- All errors are logged to console
+## Hook Configuration for Claude Code Projects
 
-## Next Development Steps
+Copy to `.claude/settings.json` in any project you want to monitor:
+```json
+{
+  "hooks": {
+    "SessionStart": "curl -X POST http://localhost:3001/api/webhooks/claude/SessionStart -H 'Content-Type: application/json' -d @- --max-time 2",
+    "PreToolUse": "curl -X POST http://localhost:3001/api/webhooks/claude/PreToolUse -H 'Content-Type: application/json' -d @- --max-time 2",
+    "PostToolUse": "curl -X POST http://localhost:3001/api/webhooks/claude/PostToolUse -H 'Content-Type: application/json' -d @- --max-time 2",
+    "UserPromptSubmit": "curl -X POST http://localhost:3001/api/webhooks/claude/UserPromptSubmit -H 'Content-Type: application/json' -d @- --max-time 2",
+    "Stop": "curl -X POST http://localhost:3001/api/webhooks/claude/Stop -H 'Content-Type: application/json' -d @- --max-time 2"
+  }
+}
+```
 
-Priority tasks for Phase II (Database & Cloud):
-1. Implement Supabase database schema for event persistence
-2. Add WebSocket/SSE for real-time updates
-3. Deploy to Vercel Edge Functions
-4. Implement proper authentication system
+## TypeScript Best Practices in This Codebase
+
+- Strict mode enabled with comprehensive type checking
+- Service classes use dependency injection pattern
+- Unused parameters prefixed with underscore
+- Interfaces defined for all data structures in `types/index.ts`
+- Async/await used consistently for database operations

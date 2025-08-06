@@ -3,21 +3,22 @@
   "name": "agentic-frontier",
   "builds": [
     {
-      "src": "backend/server.js",
+      "src": "backend/dist/src/app.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/backend/server.js"
+      "dest": "/backend/dist/src/app.js"
     }
   ],
+  "buildCommand": "cd backend && npm run build",
   "env": {
     "NODE_ENV": "production"
   },
   "functions": {
-    "backend/server.js": {
+    "backend/dist/src/app.js": {
       "maxDuration": 30
     }
   }
