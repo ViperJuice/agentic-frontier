@@ -4,6 +4,9 @@ import JavaScript from 'tree-sitter-javascript';
 import Python from 'tree-sitter-python';
 import Rust from 'tree-sitter-rust';
 import Go from 'tree-sitter-go';
+import Cpp from 'tree-sitter-cpp';
+import Java from 'tree-sitter-java';
+import Dart from 'tree-sitter-dart';
 import { readFile } from 'fs/promises';
 import { logWithTimestamp } from '../utils';
 import type { File } from '../types';
@@ -72,7 +75,26 @@ export class TreeSitterService {
       goParser.setLanguage(Go as any);
       this.parsers.set('go', goParser);
 
-      logWithTimestamp('[TreeSitter] Parsers initialized for: ts, tsx, js, jsx, py, rs, go');
+      // C++ parser
+      const cppParser = new Parser();
+      cppParser.setLanguage(Cpp as any);
+      this.parsers.set('cpp', cppParser);
+      this.parsers.set('cc', cppParser);
+      this.parsers.set('cxx', cppParser);
+      this.parsers.set('hpp', cppParser);
+      this.parsers.set('h', cppParser);
+
+      // Java parser
+      const javaParser = new Parser();
+      javaParser.setLanguage(Java as any);
+      this.parsers.set('java', javaParser);
+
+      // Dart parser
+      const dartParser = new Parser();
+      dartParser.setLanguage(Dart as any);
+      this.parsers.set('dart', dartParser);
+
+      logWithTimestamp('[TreeSitter] Parsers initialized for: ts, tsx, js, jsx, py, rs, go, cpp, hpp, h, cc, cxx, java, dart');
     } catch (error) {
       console.error('[TreeSitter] Failed to initialize parsers:', error);
     }
@@ -125,6 +147,12 @@ export class TreeSitterService {
       return this.extractRustStructures(node, sourceCode);
     } else if (language === 'go') {
       return this.extractGoStructures(node, sourceCode);
+    } else if (language === 'cpp' || language === 'cc' || language === 'cxx' || language === 'hpp' || language === 'h') {
+      return this.extractCppStructures(node, sourceCode);
+    } else if (language === 'java') {
+      return this.extractJavaStructures(node, sourceCode);
+    } else if (language === 'dart') {
+      return this.extractDartStructures(node, sourceCode);
     }
     return [];
   }
@@ -1164,6 +1192,818 @@ export class TreeSitterService {
       building_color: '#e74c3c',
       building_type: 'residential'
     };
+  }
+
+  // ==================== C++ EXTRACTION ====================
+
+  private extractCppStructures(
+    node: Parser.SyntaxNode,
+    sourceCode: string
+  ): ParsedStructure[] {
+    const structures: ParsedStructure[] = [];
+    const idCounter = { value: 0 };
+
+    const traverse = (n: Parser.SyntaxNode, parentId?: string, depth: number = 0) => {
+      // Class declarations
+      if (n.type === 'class_specifier') {
+        const structure = this.extractCppClass(n, sourceCode, parentId, depth, idCounter);
+        if (structure) {
+          structures.push(structure);
+
+          // Extract methods from class body
+          const bodyNode = n.childForFieldName('body');
+          if (bodyNode) {
+            bodyNode.children.forEach(child => {
+              traverse(child, structure.id, depth + 1);
+            });
+          }
+        }
+      }
+
+      // Struct declarations
+      else if (n.type === 'struct_specifier') {
+        const structure = this.extractCppStruct(n, sourceCode, parentId, depth, idCounter);
+        if (structure) {
+          structures.push(structure);
+
+          const bodyNode = n.childForFieldName('body');
+          if (bodyNode) {
+            bodyNode.children.forEach(child => {
+              traverse(child, structure.id, depth + 1);
+            });
+          }
+        }
+      }
+
+      // Function definitions
+      else if (n.type === 'function_definition') {
+        const structure = this.extractCppFunction(n, sourceCode, parentId, depth, idCounter);
+        if (structure) structures.push(structure);
+      }
+
+      // Template declarations
+      else if (n.type === 'template_declaration') {
+        const declaration = n.children.find(c =>
+          c.type === 'class_specifier' ||
+          c.type === 'struct_specifier' ||
+          c.type === 'function_definition'
+        );
+        if (declaration) {
+          traverse(declaration, parentId, depth);
+        }
+      }
+
+      // Namespace definitions
+      else if (n.type === 'namespace_definition') {
+        const structure = this.extractCppNamespace(n, sourceCode, parentId, depth, idCounter);
+        if (structure) {
+          structures.push(structure);
+
+          const bodyNode = n.childForFieldName('body');
+          if (bodyNode) {
+            bodyNode.children.forEach(child => {
+              traverse(child, structure.id, depth + 1);
+            });
+          }
+        }
+      }
+
+      // Recurse for other nodes
+      else if (!['class_specifier', 'struct_specifier', 'function_definition', 'namespace_definition'].includes(n.type)) {
+        n.children.forEach(child => traverse(child, parentId, depth));
+      }
+    };
+
+    traverse(node);
+    return structures;
+  }
+
+  private extractCppClass(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    // Check for template
+    const isTemplate = node.parent?.type === 'template_declaration';
+
+    return {
+      id,
+      name: isTemplate ? `template<> ${name}` : name,
+      type: 'class',
+      visibility: 'public',
+      is_async: false,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#3498db',
+      building_type: 'commercial_modern'
+    };
+  }
+
+  private extractCppStruct(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    return {
+      id,
+      name,
+      type: 'class', // Structs are similar to classes
+      visibility: 'public',
+      is_async: false,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: 1,
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#3498db',
+      building_type: 'commercial_modern'
+    };
+  }
+
+  private extractCppFunction(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const declarator = node.childForFieldName('declarator');
+    if (!declarator) return null;
+
+    // Extract function name from declarator
+    let nameNode = declarator.childForFieldName('declarator');
+    if (!nameNode) nameNode = declarator;
+
+    // Get the actual identifier
+    const identifier = nameNode.descendantsOfType('identifier')[0] || nameNode.descendantsOfType('field_identifier')[0];
+    if (!identifier) return null;
+
+    const name = sourceCode.substring(identifier.startIndex, identifier.endIndex);
+    const id = this.generateId(idCounter);
+
+    // Check visibility based on parent class context
+    const visibility = this.extractCppVisibility(node, sourceCode);
+
+    // Determine if it's a method or function
+    const isMethod = parentId !== undefined;
+
+    return {
+      id,
+      name,
+      type: isMethod ? 'method' : 'function',
+      visibility,
+      is_async: false,
+      is_static: this.hasCppModifier(node, sourceCode, 'static'),
+      is_abstract: this.hasCppModifier(node, sourceCode, 'virtual'),
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: isMethod ? '#e74c3c' : '#2ecc71',
+      building_type: isMethod ? 'residential' : 'industrial'
+    };
+  }
+
+  private extractCppNamespace(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    return {
+      id,
+      name: `namespace ${name}`,
+      type: 'class',
+      visibility: 'public',
+      is_async: false,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: 1,
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#f39c12',
+      building_type: 'commercial'
+    };
+  }
+
+  private extractCppVisibility(node: Parser.SyntaxNode, sourceCode: string): 'public' | 'private' | 'protected' | 'static' {
+    // Look for access specifier in siblings or parent
+    let current: Parser.SyntaxNode | null = node.previousSibling;
+    while (current) {
+      if (current.type === 'access_specifier') {
+        const spec = sourceCode.substring(current.startIndex, current.endIndex);
+        if (spec.includes('private')) return 'private';
+        if (spec.includes('protected')) return 'protected';
+        if (spec.includes('public')) return 'public';
+      }
+      current = current.previousSibling;
+    }
+    return 'public'; // Default
+  }
+
+  private hasCppModifier(node: Parser.SyntaxNode, sourceCode: string, modifier: string): boolean {
+    for (const child of node.children) {
+      if (child.type === 'type_qualifier' || child.type === 'storage_class_specifier') {
+        const text = sourceCode.substring(child.startIndex, child.endIndex);
+        if (text === modifier) return true;
+      }
+    }
+    return false;
+  }
+
+  // ==================== JAVA EXTRACTION ====================
+
+  private extractJavaStructures(
+    node: Parser.SyntaxNode,
+    sourceCode: string
+  ): ParsedStructure[] {
+    const structures: ParsedStructure[] = [];
+    const idCounter = { value: 0 };
+
+    const traverse = (n: Parser.SyntaxNode, parentId?: string, depth: number = 0) => {
+      // Class declarations
+      if (n.type === 'class_declaration') {
+        const structure = this.extractJavaClass(n, sourceCode, parentId, depth, idCounter);
+        if (structure) {
+          structures.push(structure);
+
+          // Extract methods from class body
+          const bodyNode = n.childForFieldName('body');
+          if (bodyNode) {
+            bodyNode.children.forEach(child => {
+              traverse(child, structure.id, depth + 1);
+            });
+          }
+        }
+      }
+
+      // Interface declarations
+      else if (n.type === 'interface_declaration') {
+        const structure = this.extractJavaInterface(n, sourceCode, parentId, depth, idCounter);
+        if (structure) {
+          structures.push(structure);
+
+          const bodyNode = n.childForFieldName('body');
+          if (bodyNode) {
+            bodyNode.children.forEach(child => {
+              traverse(child, structure.id, depth + 1);
+            });
+          }
+        }
+      }
+
+      // Enum declarations
+      else if (n.type === 'enum_declaration') {
+        const structure = this.extractJavaEnum(n, sourceCode, parentId, depth, idCounter);
+        if (structure) structures.push(structure);
+      }
+
+      // Method declarations
+      else if (n.type === 'method_declaration') {
+        const structure = this.extractJavaMethod(n, sourceCode, parentId, depth, idCounter);
+        if (structure) structures.push(structure);
+      }
+
+      // Constructor declarations
+      else if (n.type === 'constructor_declaration') {
+        const structure = this.extractJavaConstructor(n, sourceCode, parentId, depth, idCounter);
+        if (structure) structures.push(structure);
+      }
+
+      // Recurse for other nodes
+      else if (!['class_declaration', 'interface_declaration', 'enum_declaration', 'method_declaration', 'constructor_declaration'].includes(n.type)) {
+        n.children.forEach(child => traverse(child, parentId, depth));
+      }
+    };
+
+    traverse(node);
+    return structures;
+  }
+
+  private extractJavaClass(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    // Extract annotations
+    const annotations = this.extractJavaAnnotations(node, sourceCode);
+
+    // Extract modifiers
+    const isAbstract = this.hasJavaModifier(node, sourceCode, 'abstract');
+    const visibility = this.extractJavaVisibility(node, sourceCode);
+
+    return {
+      id,
+      name,
+      type: 'class',
+      visibility,
+      is_async: false,
+      is_static: this.hasJavaModifier(node, sourceCode, 'static'),
+      is_abstract: isAbstract,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      decorators: annotations,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#3498db',
+      building_type: 'commercial_modern'
+    };
+  }
+
+  private extractJavaInterface(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    const annotations = this.extractJavaAnnotations(node, sourceCode);
+
+    return {
+      id,
+      name,
+      type: 'interface',
+      visibility: this.extractJavaVisibility(node, sourceCode),
+      is_async: false,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      decorators: annotations,
+      complexity_score: 1,
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#3498db',
+      building_type: 'laboratory'
+    };
+  }
+
+  private extractJavaEnum(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    return {
+      id,
+      name,
+      type: 'enum',
+      visibility: this.extractJavaVisibility(node, sourceCode),
+      is_async: false,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: 1,
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#9b59b6',
+      building_type: 'commercial'
+    };
+  }
+
+  private extractJavaMethod(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    // Extract annotations
+    const annotations = this.extractJavaAnnotations(node, sourceCode);
+
+    // Extract parameters
+    const parameters = this.extractJavaParameters(node, sourceCode);
+
+    // Extract return type
+    const typeNode = node.childForFieldName('type');
+    const returnType = typeNode ? sourceCode.substring(typeNode.startIndex, typeNode.endIndex) : undefined;
+
+    return {
+      id,
+      name,
+      type: 'method',
+      visibility: this.extractJavaVisibility(node, sourceCode),
+      is_async: false,
+      is_static: this.hasJavaModifier(node, sourceCode, 'static'),
+      is_abstract: this.hasJavaModifier(node, sourceCode, 'abstract'),
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      parameters,
+      return_type: returnType,
+      decorators: annotations,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#e74c3c',
+      building_type: 'residential'
+    };
+  }
+
+  private extractJavaConstructor(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    const parameters = this.extractJavaParameters(node, sourceCode);
+
+    return {
+      id,
+      name,
+      type: 'constructor',
+      visibility: this.extractJavaVisibility(node, sourceCode),
+      is_async: false,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      parameters,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#e74c3c',
+      building_type: 'residential'
+    };
+  }
+
+  private extractJavaAnnotations(node: Parser.SyntaxNode, sourceCode: string): string[] {
+    const annotations: string[] = [];
+    for (const child of node.children) {
+      if (child.type === 'marker_annotation' || child.type === 'annotation') {
+        annotations.push(sourceCode.substring(child.startIndex, child.endIndex));
+      }
+    }
+    return annotations;
+  }
+
+  private extractJavaVisibility(node: Parser.SyntaxNode, sourceCode: string): 'public' | 'private' | 'protected' | 'static' {
+    const modifiersNode = node.childForFieldName('modifiers');
+    if (modifiersNode) {
+      const modifiersText = sourceCode.substring(modifiersNode.startIndex, modifiersNode.endIndex);
+      if (modifiersText.includes('private')) return 'private';
+      if (modifiersText.includes('protected')) return 'protected';
+      if (modifiersText.includes('public')) return 'public';
+    }
+    return 'public'; // Default in Java
+  }
+
+  private hasJavaModifier(node: Parser.SyntaxNode, sourceCode: string, modifier: string): boolean {
+    const modifiersNode = node.childForFieldName('modifiers');
+    if (modifiersNode) {
+      const modifiersText = sourceCode.substring(modifiersNode.startIndex, modifiersNode.endIndex);
+      return modifiersText.includes(modifier);
+    }
+    return false;
+  }
+
+  private extractJavaParameters(node: Parser.SyntaxNode, sourceCode: string): Array<{ name: string; type?: string }> {
+    const params: Array<{ name: string; type?: string }> = [];
+    const paramsNode = node.childForFieldName('parameters');
+
+    if (!paramsNode) return params;
+
+    paramsNode.children.forEach(child => {
+      if (child.type === 'formal_parameter') {
+        const nameNode = child.childForFieldName('name');
+        const typeNode = child.childForFieldName('type');
+        if (nameNode) {
+          params.push({
+            name: sourceCode.substring(nameNode.startIndex, nameNode.endIndex),
+            type: typeNode ? sourceCode.substring(typeNode.startIndex, typeNode.endIndex) : undefined
+          });
+        }
+      }
+    });
+
+    return params;
+  }
+
+  // ==================== DART EXTRACTION ====================
+
+  private extractDartStructures(
+    node: Parser.SyntaxNode,
+    sourceCode: string
+  ): ParsedStructure[] {
+    const structures: ParsedStructure[] = [];
+    const idCounter = { value: 0 };
+
+    const traverse = (n: Parser.SyntaxNode, parentId?: string, depth: number = 0) => {
+      // Class declarations
+      if (n.type === 'class_definition') {
+        const structure = this.extractDartClass(n, sourceCode, parentId, depth, idCounter);
+        if (structure) {
+          structures.push(structure);
+
+          // Extract methods from class body
+          const bodyNode = n.childForFieldName('body');
+          if (bodyNode) {
+            bodyNode.children.forEach(child => {
+              traverse(child, structure.id, depth + 1);
+            });
+          }
+        }
+      }
+
+      // Mixin declarations
+      else if (n.type === 'mixin_declaration') {
+        const structure = this.extractDartMixin(n, sourceCode, parentId, depth, idCounter);
+        if (structure) structures.push(structure);
+      }
+
+      // Method declarations
+      else if (n.type === 'method_signature' || n.type === 'function_signature') {
+        const structure = this.extractDartMethod(n, sourceCode, parentId, depth, idCounter);
+        if (structure) structures.push(structure);
+      }
+
+      // Function declarations
+      else if (n.type === 'function_declaration') {
+        const structure = this.extractDartFunction(n, sourceCode, parentId, depth, idCounter);
+        if (structure) structures.push(structure);
+      }
+
+      // Recurse for other nodes
+      else if (!['class_definition', 'mixin_declaration', 'method_signature', 'function_signature', 'function_declaration'].includes(n.type)) {
+        n.children.forEach(child => traverse(child, parentId, depth));
+      }
+    };
+
+    traverse(node);
+    return structures;
+  }
+
+  private extractDartClass(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    // Check for abstract
+    const isAbstract = this.hasDartModifier(node, sourceCode, 'abstract');
+
+    return {
+      id,
+      name,
+      type: 'class',
+      visibility: name.startsWith('_') ? 'private' : 'public', // Dart uses underscore for private
+      is_async: false,
+      is_static: false,
+      is_abstract: isAbstract,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#3498db',
+      building_type: 'commercial_modern'
+    };
+  }
+
+  private extractDartMixin(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    return {
+      id,
+      name: `mixin ${name}`,
+      type: 'interface',
+      visibility: name.startsWith('_') ? 'private' : 'public',
+      is_async: false,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: 1,
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#9b59b6',
+      building_type: 'laboratory'
+    };
+  }
+
+  private extractDartMethod(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    // Check if async
+    const isAsync = this.hasDartModifier(node, sourceCode, 'async');
+
+    return {
+      id,
+      name,
+      type: 'method',
+      visibility: name.startsWith('_') ? 'private' : 'public',
+      is_async: isAsync,
+      is_static: this.hasDartModifier(node, sourceCode, 'static'),
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#e74c3c',
+      building_type: 'residential'
+    };
+  }
+
+  private extractDartFunction(
+    node: Parser.SyntaxNode,
+    sourceCode: string,
+    parentId: string | undefined,
+    depth: number,
+    idCounter: { value: number }
+  ): ParsedStructure | null {
+    const nameNode = node.childForFieldName('name');
+    if (!nameNode) return null;
+
+    const name = sourceCode.substring(nameNode.startIndex, nameNode.endIndex);
+    const id = this.generateId(idCounter);
+
+    const isAsync = this.hasDartModifier(node, sourceCode, 'async');
+
+    return {
+      id,
+      name,
+      type: 'function',
+      visibility: name.startsWith('_') ? 'private' : 'public',
+      is_async: isAsync,
+      is_static: false,
+      is_abstract: false,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      start_column: node.startPosition.column,
+      end_column: node.endPosition.column,
+      complexity_score: this.calculateComplexity(node),
+      parent_id: parentId,
+      depth,
+      district_x: 0,
+      district_y: 0,
+      building_size: 1,
+      building_color: '#2ecc71',
+      building_type: 'industrial'
+    };
+  }
+
+  private hasDartModifier(node: Parser.SyntaxNode, sourceCode: string, modifier: string): boolean {
+    for (const child of node.children) {
+      const text = sourceCode.substring(child.startIndex, child.endIndex);
+      if (text === modifier) return true;
+    }
+    return false;
   }
 
   // Helper methods
