@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import { DatabaseService } from './services/DatabaseService';
 import { FileService } from './services/FileService';
 import { SSEService } from './services/SSEService';
+import { TreeSitterService } from './services/TreeSitterService';
 
 // Processors
 import { HookProcessor } from './processors/HookProcessor';
@@ -39,9 +40,10 @@ const databaseConfig = {
 const databaseService = new DatabaseService(databaseConfig);
 const fileService = new FileService(databaseService);
 const sseService = new SSEService();
+const treeService = new TreeSitterService();
 
 // Initialize processor
-const hookProcessor = new HookProcessor(databaseService, fileService, sseService);
+const hookProcessor = new HookProcessor(databaseService, fileService, sseService, treeService);
 
 // Mount routes
 app.use('/api/webhooks', createWebhookRoutes(hookProcessor));
@@ -62,11 +64,11 @@ app.listen(PORT, () => {
   console.log(`🚀 Agentic Frontier backend running on http://localhost:${PORT}`);
   console.log(`📡 SSE stream available at http://localhost:${PORT}/api/events/stream`);
   console.log(`🔧 Webhook endpoint: http://localhost:${PORT}/api/webhooks/claude/:hookType`);
-  console.log('\n⚠️  TypeScript Refactor Complete:');
-  console.log('   - File-level visualization active');
-  console.log('   - Code structure parsing: DISABLED (no reliable content access)');
-  console.log('   - Awaiting TreeSitter integration for structure parsing');
-  console.log('\n📋 Files are marked for parsing when TreeSitter becomes available');
+  console.log('\n✨ Phase 1: TreeSitter Integration ACTIVE');
+  console.log('   - Code structure parsing: ENABLED');
+  console.log(`   - Supported languages: ${treeService.getStats().supportedLanguages.join(', ')}`);
+  console.log('   - Real-time structure extraction and visualization');
+  console.log('\n🌳 Files will be automatically parsed when modified via Claude Code');
 });
 
 export default app;
