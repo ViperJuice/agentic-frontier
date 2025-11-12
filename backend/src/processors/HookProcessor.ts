@@ -15,21 +15,25 @@ import {
 import { DatabaseService } from '../services/DatabaseService';
 import { FileService } from '../services/FileService';
 import { SSEService } from '../services/SSEService';
+import { TreeSitterService } from '../services/TreeSitterService';
 import { logWithTimestamp } from '../utils';
 
 export class HookProcessor {
   private databaseService: DatabaseService;
   private fileService: FileService;
   private sseService: SSEService;
+  private treeService: TreeSitterService;
 
   constructor(
     databaseService: DatabaseService,
     fileService: FileService,
-    sseService: SSEService
+    sseService: SSEService,
+    treeService: TreeSitterService
   ) {
     this.databaseService = databaseService;
     this.fileService = fileService;
     this.sseService = sseService;
+    this.treeService = treeService;
   }
 
   async processHook(hookType: HookType, data: BaseHookData): Promise<Activity | null> {
@@ -209,19 +213,69 @@ export class HookProcessor {
   private async handleFileOperation(data: ToolUseData, sessionId: string): Promise<void> {
     const toolInput = data.tool_input || {};
     const filePath = toolInput.file_path;
-    
+
     if (!filePath) return;
-    
+
     const file = await this.fileService.updateFile(filePath, sessionId);
-    
+
     if (!file) {
       console.error(`[File Operation] Failed to update file record for ${filePath}`);
       return;
     }
-    
-    await this.fileService.markFileNeedsStructureUpdate(file.id);
-    
-    logWithTimestamp(`[File Operation] ${filePath} - Marked for future parsing when TreeSitter available`);
+
+    // Parse file structures with TreeSitter
+    try {
+      const structures = await this.treeService.parseFile(file);
+
+      if (structures && structures.length > 0) {
+        // Store structures in database
+        const structuresForDB = structures.map(s => ({
+          file_id: file.id,
+          project_id: file.project_id,
+          session_id: sessionId,
+          name: s.name,
+          type: s.type,
+          visibility: s.visibility,
+          is_async: s.is_async,
+          is_static: s.is_static,
+          is_abstract: s.is_abstract,
+          start_line: s.start_line,
+          end_line: s.end_line,
+          start_column: s.start_column,
+          end_column: s.end_column,
+          parameters: s.parameters as any,
+          return_type: s.return_type,
+          decorators: s.decorators as any,
+          docstring: s.docstring,
+          complexity_score: s.complexity_score,
+          parent_structure_id: s.parent_id,
+          depth: s.depth,
+          district_x: s.district_x,
+          district_y: s.district_y,
+          building_type: s.building_type,
+          building_color: s.building_color,
+          building_size: s.building_size
+        }));
+
+        await this.databaseService.storeCodeStructures(structuresForDB, file.id);
+
+        // Broadcast to frontend via SSE
+        this.sseService.broadcastUpdate({
+          type: 'structures_updated',
+          file: file,
+          structures: structures
+        });
+
+        logWithTimestamp(`[TreeSitter] Parsed ${filePath}: ${structures.length} structures found`);
+      } else {
+        // No structures found or unsupported file type - mark as parsed anyway
+        await this.fileService.markFileNeedsStructureUpdate(file.id);
+        logWithTimestamp(`[TreeSitter] No structures found in ${filePath}`);
+      }
+    } catch (error) {
+      console.error(`[TreeSitter] Error parsing ${filePath}:`, error);
+      await this.fileService.markFileNeedsStructureUpdate(file.id);
+    }
   }
 
   private handleUserPrompt(data: UserPromptData): Activity {
